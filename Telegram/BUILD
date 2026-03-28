@@ -349,6 +349,14 @@ objc_library(
     ],
 )
 
+objc_library(
+    name = "LibSDKFrameworks",
+    sdk_frameworks = [
+        "Security",
+        "MobileCoreServices",
+    ],
+)
+
 swift_library(
     name = "Lib",
     module_name = "Lib",
@@ -356,10 +364,6 @@ swift_library(
         "Telegram-iOS/Application.swift",
         "Telegram-iOS/MessagingServerApp/**/*.swift",
     ]),
-    sdk_frameworks = [
-        "Security",
-        "MobileCoreServices",
-    ],
     data = [
         ":Icons",
         ":AppResources",
@@ -378,6 +382,7 @@ swift_library(
         ":GeneratedPresentationStrings/Resources/PresentationStrings.data",
     ],
     deps = [
+        ":LibSDKFrameworks",
         "//submodules/TelegramUI:TelegramUI",
         "//third-party/boringssl:crypto",
     ],
