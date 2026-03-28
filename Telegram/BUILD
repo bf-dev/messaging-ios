@@ -354,7 +354,12 @@ swift_library(
     module_name = "Lib",
     srcs = glob([
         "Telegram-iOS/Application.swift",
+        "Telegram-iOS/MessagingServerApp/**/*.swift",
     ]),
+    sdk_frameworks = [
+        "Security",
+        "MobileCoreServices",
+    ],
     data = [
         ":Icons",
         ":AppResources",
