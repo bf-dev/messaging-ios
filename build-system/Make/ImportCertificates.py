@@ -4,7 +4,7 @@ import argparse
 
 from BuildEnvironment import run_executable_with_output
 
-def import_certificates(certificatesPath):
+def import_certificates(certificatesPath, p12_password=''):
     if not os.path.exists(certificatesPath):
         print('{} does not exist'.format(certificatesPath))
         sys.exit(1)
@@ -41,13 +41,14 @@ def import_certificates(certificatesPath):
     for file_name in os.listdir(certificatesPath):
         file_path = certificatesPath + '/' + file_name
         if file_path.endswith('.p12') or file_path.endswith('.cer'):
+            file_password = p12_password if file_path.endswith('.p12') else ''
             run_executable_with_output('security', arguments=[
                 'import',
                 file_path,
                 '-k',
                 keychain_name,
                 '-P',
-                '',
+                file_password,
                 '-T',
                 '/usr/bin/codesign',
                 '-T',
@@ -85,6 +86,12 @@ if __name__ == '__main__':
         required=True,
         help='Path to certificates.'
     )
+    parser.add_argument(
+        '--password',
+        required=False,
+        default=os.environ.get('P12_PASSWORD', ''),
+        help='Password for .p12 files. Defaults to P12_PASSWORD if set.'
+    )
 
     if len(sys.argv) < 2:
         parser.print_help()
@@ -92,4 +99,4 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    import_certificates(args.path)
+    import_certificates(args.path, p12_password=args.password)

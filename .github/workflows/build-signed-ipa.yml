@@ -1,0 +1,196 @@
+name: Build Signed IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: false
+        default: main
+
+jobs:
+  build:
+    permissions:
+      contents: read
+
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set active Xcode path
+        run: |
+          XCODE_VERSION=$(python3 -c 'import json; print(json.load(open("versions.json"))["xcode"])')
+          sudo xcode-select -s "/Applications/Xcode_$XCODE_VERSION.app/Contents/Developer"
+          xcodebuild -version
+
+      - name: Validate required secrets
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_DEVELOPMENT_BUNDLE_ID: ${{ secrets.IOS_DEVELOPMENT_BUNDLE_ID }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          IOS_CODESIGNING_ZIP_B64: ${{ secrets.IOS_CODESIGNING_ZIP_B64 }}
+          TELEGRAM_CODESIGNING_GIT_PASSWORD: ${{ secrets.TELEGRAM_CODESIGNING_GIT_PASSWORD }}
+          TELEGRAM_CODESIGNING_GIT_REPOSITORY: ${{ secrets.TELEGRAM_CODESIGNING_GIT_REPOSITORY }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import sys
+
+          required_base = [
+              'APPLE_TEAM_ID',
+              'IOS_DEVELOPMENT_BUNDLE_ID',
+          ]
+          missing = [key for key in required_base if not os.environ.get(key)]
+          if missing:
+              print('Missing repo secrets: {}.'.format(', '.join(missing)), file=sys.stderr)
+              sys.exit(1)
+
+          has_zip = bool(os.environ.get('IOS_CODESIGNING_ZIP_B64'))
+          has_git = bool(os.environ.get('TELEGRAM_CODESIGNING_GIT_REPOSITORY')) and bool(os.environ.get('TELEGRAM_CODESIGNING_GIT_PASSWORD'))
+          if not has_zip and not has_git:
+              print(
+                  'Provide either IOS_CODESIGNING_ZIP_B64 or both TELEGRAM_CODESIGNING_GIT_REPOSITORY '
+                  'and TELEGRAM_CODESIGNING_GIT_PASSWORD.',
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          PY
+
+      - name: Create canonical source directory
+        run: |
+          set -x
+          sudo mkdir -p /Users/Shared
+          cp -R "$GITHUB_WORKSPACE" /Users/Shared/
+          mv "/Users/Shared/$(basename "$GITHUB_WORKSPACE")" /Users/Shared/telegram-ios
+
+      - name: Prepare development configuration and signing assets
+        working-directory: /Users/Shared/telegram-ios
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_DEVELOPMENT_BUNDLE_ID: ${{ secrets.IOS_DEVELOPMENT_BUNDLE_ID }}
+          IOS_CODESIGNING_ZIP_B64: ${{ secrets.IOS_CODESIGNING_ZIP_B64 }}
+          TELEGRAM_CODESIGNING_GIT_PASSWORD: ${{ secrets.TELEGRAM_CODESIGNING_GIT_PASSWORD }}
+          TELEGRAM_CODESIGNING_GIT_REPOSITORY: ${{ secrets.TELEGRAM_CODESIGNING_GIT_REPOSITORY }}
+          TELEGRAM_CODESIGNING_PRIVATE_KEY: ${{ secrets.TELEGRAM_CODESIGNING_PRIVATE_KEY }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import io
+          import json
+          import os
+          import pathlib
+          import shutil
+          import sys
+          import zipfile
+
+          root = pathlib.Path('build-system/github-actions')
+          if root.exists():
+              shutil.rmtree(root)
+          codesigning_dir = root / 'codesigning'
+          certs_dir = codesigning_dir / 'certs'
+          profiles_dir = codesigning_dir / 'profiles'
+          certs_dir.mkdir(parents=True, exist_ok=True)
+          profiles_dir.mkdir(parents=True, exist_ok=True)
+
+          if os.environ.get('TELEGRAM_CODESIGNING_GIT_REPOSITORY') and os.environ.get('TELEGRAM_CODESIGNING_GIT_PASSWORD'):
+              sys.path.insert(0, str(pathlib.Path('build-system/Make').resolve()))
+              from BuildConfiguration import GitCodesigningSource
+
+              source = GitCodesigningSource(
+                  repo_url=os.environ['TELEGRAM_CODESIGNING_GIT_REPOSITORY'],
+                  private_key=os.environ.get('TELEGRAM_CODESIGNING_PRIVATE_KEY'),
+                  team_id=os.environ['APPLE_TEAM_ID'],
+                  bundle_id=os.environ['IOS_DEVELOPMENT_BUNDLE_ID'],
+                  codesigning_type='development',
+                  password=os.environ['TELEGRAM_CODESIGNING_GIT_PASSWORD'],
+                  always_fetch=True,
+              )
+              source.load_data(working_dir=str(root / 'codesigning-workdir'))
+              source.copy_profiles_to_destination(str(profiles_dir))
+              source.copy_certificates_to_destination(str(certs_dir))
+          else:
+              zip_bytes = base64.b64decode(os.environ['IOS_CODESIGNING_ZIP_B64'])
+              with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+                  archive.extractall(codesigning_dir)
+
+          if not certs_dir.is_dir() or not any(certs_dir.iterdir()):
+              print('Prepared signing assets are missing certs/.', file=sys.stderr)
+              sys.exit(1)
+          if not profiles_dir.is_dir() or not any(profiles_dir.iterdir()):
+              print('Prepared signing assets are missing profiles/.', file=sys.stderr)
+              sys.exit(1)
+
+          with open('build-system/appstore-configuration.json', encoding='utf-8') as file:
+              appstore_configuration = json.load(file)
+          api_id = os.environ.get('TELEGRAM_API_ID') or appstore_configuration['api_id']
+          api_hash = os.environ.get('TELEGRAM_API_HASH') or appstore_configuration['api_hash']
+
+          configuration = {
+              'bundle_id': os.environ['IOS_DEVELOPMENT_BUNDLE_ID'],
+              'api_id': api_id,
+              'api_hash': api_hash,
+              'team_id': os.environ['APPLE_TEAM_ID'],
+              'app_center_id': '0',
+              'is_internal_build': 'true',
+              'is_appstore_build': 'false',
+              'appstore_id': '0',
+              'app_specific_url_scheme': 'tg',
+              'premium_iap_product_id': '',
+              'enable_siri': False,
+              'enable_icloud': False,
+          }
+          (root / 'development-configuration.json').write_text(
+              json.dumps(configuration, indent=2) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+      - name: Import code-signing certificates
+        working-directory: /Users/Shared/telegram-ios
+        env:
+          P12_PASSWORD: ${{ secrets.IOS_DEVELOPMENT_CERT_P12_PASSWORD }}
+        run: |
+          python3 build-system/Make/ImportCertificates.py \
+            --path build-system/github-actions/codesigning/certs
+
+      - name: Build signed IPA
+        working-directory: /Users/Shared/telegram-ios
+        run: |
+          set -euxo pipefail
+
+          BAZEL_USER_ROOT="/private/var/tmp/_bazel_containerhost"
+          BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
+          APP_VERSION=$(python3 -c 'import json; print(json.load(open("versions.json"))["app"])')
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          BUILD_NUMBER="$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))"
+
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+
+          python3 -u build-system/Make/Make.py \
+            --bazelUserRoot="$BAZEL_USER_ROOT" \
+            --cacheDir="$HOME/telegram-bazel-cache" \
+            build \
+            --configurationPath="build-system/github-actions/development-configuration.json" \
+            --codesigningInformationPath="build-system/github-actions/codesigning" \
+            --configuration=release_arm64 \
+            --buildNumber="$BUILD_NUMBER" \
+            --outputBuildArtifactsPath="build/artifacts"
+
+      - name: Upload signed IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: telegram-signed-ipa-${{ env.BUILD_NUMBER }}
+          path: |
+            /Users/Shared/telegram-ios/build/artifacts/Telegram.ipa
+            /Users/Shared/telegram-ios/build/artifacts/Telegram.DSYMs.zip
+          if-no-files-found: error
+          retention-days: 7
