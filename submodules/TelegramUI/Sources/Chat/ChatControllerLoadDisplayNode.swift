@@ -1100,6 +1100,9 @@ extension ChatControllerImpl {
                 switch customChatContents.kind {
                 case .hashTagSearch:
                     break
+                case .messagingServerChat:
+                    customChatContents.enqueueMessages(messages: messages)
+                    strongSelf.chatDisplayNode.historyNode.scrollToEndOfHistory()
                 case .quickReplyMessageInput:
                     customChatContents.enqueueMessages(messages: messages)
                     strongSelf.chatDisplayNode.historyNode.scrollToEndOfHistory()
@@ -2187,6 +2190,29 @@ extension ChatControllerImpl {
                     media = .update(.standalone(media: webpage))
                 } else {
                     media = .keep
+                }
+
+                if case let .customChatContents(customChatContents) = strongSelf.subject {
+                    switch customChatContents.kind {
+                    case .messagingServerChat:
+                        customChatContents.editMessage(
+                            id: editMessage.messageId,
+                            text: text.string,
+                            media: media,
+                            entities: entitiesAttribute,
+                            webpagePreviewAttribute: webpagePreviewAttribute,
+                            disableUrlPreview: disableUrlPreview
+                        )
+                        strongSelf.updateChatPresentationInterfaceState(animated: true, interactive: true, { state in
+                            var state = state
+                            state = state.updatedInterfaceState({ $0.withUpdatedEditMessage(nil) })
+                            state = state.updatedEditMessageState(nil)
+                            return state
+                        })
+                        return
+                    case .hashTagSearch, .quickReplyMessageInput, .businessLinkSetup:
+                        break
+                    }
                 }
                 
                 let _ = (strongSelf.context.account.postbox.messageAtId(editMessage.messageId)

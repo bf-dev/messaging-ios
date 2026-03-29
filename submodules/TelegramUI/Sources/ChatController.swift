@@ -695,6 +695,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         
         if case let .customChatContents(customChatContents) = subject {
             switch customChatContents.kind {
+            case .messagingServerChat:
+                break
             case .quickReplyMessageInput:
                 break
             case let .businessLinkSetup(link):
@@ -784,6 +786,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 switch customChatContents.kind {
                 case .hashTagSearch:
                     return true
+                case .messagingServerChat:
+                    break
                 case let .quickReplyMessageInput(_, shortcutType):
                     if let historyView = strongSelf.chatDisplayNode.historyNode.originalHistoryView, historyView.entries.isEmpty {
                         let titleString: String

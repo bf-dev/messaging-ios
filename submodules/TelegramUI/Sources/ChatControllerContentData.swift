@@ -1789,6 +1789,8 @@ extension ChatControllerImpl {
                     switch customChatContents.kind {
                     case .hashTagSearch:
                         break
+                    case .messagingServerChat:
+                        break
                     case let .quickReplyMessageInput(shortcut, shortcutType):
                         switch shortcutType {
                         case .generic:

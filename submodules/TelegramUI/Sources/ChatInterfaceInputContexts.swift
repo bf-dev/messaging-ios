@@ -60,6 +60,8 @@ func inputContextQueriesForChatPresentationIntefaceState(_ chatPresentationInter
         switch customChatContents.kind {
         case .hashTagSearch:
             return []
+        case .messagingServerChat:
+            break
         case .quickReplyMessageInput:
             break
         case .businessLinkSetup:
@@ -246,6 +248,8 @@ func inputTextPanelStateForChatPresentationInterfaceState(_ chatPresentationInte
                 if case let .customChatContents(customChatContents) = chatPresentationInterfaceState.subject {
                     switch customChatContents.kind {
                     case .hashTagSearch:
+                        break
+                    case .messagingServerChat:
                         break
                     case .quickReplyMessageInput:
                         break

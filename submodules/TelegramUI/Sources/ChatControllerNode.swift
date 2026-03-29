@@ -689,6 +689,8 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
                 }
                 source = .custom(messages: messages, messageId: MessageId(peerId: PeerId(0), namespace: 0, id: 0), quote: nil, isSavedMusic: false, canReorder: false, loadMore: nil)
             }
+        } else if case let .customChatContents(customChatContents) = subject {
+            source = .customView(historyView: customChatContents.historyView)
         } else if case .customChatContents = chatLocation {
             if case let .customChatContents(customChatContents) = subject {
                 source = .customView(historyView: customChatContents.historyView)
@@ -3721,13 +3723,13 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         self.searchNavigationNode?.deactivate()
         
         if let firstResponder = self.view.window?.findFirstResponder() {
-            firstResponder.resignFirstResponder()
+            _ = firstResponder.resignFirstResponder()
         }
     }
     
     func dismissTextInput() {
         if let firstResponder = self.view.window?.findFirstResponder() {
-            firstResponder.resignFirstResponder()
+            _ = firstResponder.resignFirstResponder()
         }
     }
     
@@ -4563,6 +4565,8 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             if case let .customChatContents(customChatContents) = self.chatPresentationInterfaceState.subject {
                 switch customChatContents.kind {
                 case .hashTagSearch:
+                    break
+                case .messagingServerChat:
                     break
                 case .quickReplyMessageInput:
                     break

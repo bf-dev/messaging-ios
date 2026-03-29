@@ -191,6 +191,8 @@ final class ChatBusinessLinkTitlePanelNode: ChatTitleAccessoryPanelNode {
         switch interfaceState.subject {
         case let .customChatContents(customChatContents):
             switch customChatContents.kind {
+            case .messagingServerChat:
+                break
             case .quickReplyMessageInput:
                 break
             case let .businessLinkSetup(link):

@@ -38,6 +38,8 @@ import TextFormat
 import ChatTextLinkEditUI
 import AttachmentTextInputPanelNode
 import ChatEntityKeyboardInputNode
+
+public var customMakeChatControllerHook: ((AccountContext, ChatLocation, ChatControllerSubject?, ChatControllerInitialBotStart?, ChatControllerPresentationMode, ChatControllerParams?) -> ChatController?)?
 import HashtagSearchUI
 import PeerInfoStoryGridScreen
 import TelegramAccountAuxiliaryMethods
@@ -2249,6 +2251,9 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     }
     
     public func makeChatController(context: AccountContext, chatLocation: ChatLocation, subject: ChatControllerSubject?, botStart: ChatControllerInitialBotStart?, mode: ChatControllerPresentationMode, params: ChatControllerParams?) -> ChatController {
+        if let customMakeChatControllerHook, let controller = customMakeChatControllerHook(context, chatLocation, subject, botStart, mode, params) {
+            return controller
+        }
         return ChatControllerImpl(context: context, chatLocation: chatLocation, subject: subject, botStart: botStart, mode: mode, params: params)
     }
     

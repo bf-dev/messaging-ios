@@ -2,6 +2,7 @@ import ChatListUI
 import Display
 import NavigationBarImpl
 import TabBarUI
+import TelegramUI
 import UIKit
 
 @objc(MessagingServerAppDelegate)
@@ -72,6 +73,9 @@ final class MessagingServerAppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     private func makeOnboardingRoot() -> UIViewController {
+        customNavigateToChatControllerHook = nil
+        customMakeChatControllerHook = nil
+
         let welcome = MessagingServerWelcomeViewController(sessionStore: context.sessionStore) { [weak self] viewController in
             guard let self, let navigationController = viewController.navigationController else {
                 return
@@ -88,6 +92,9 @@ final class MessagingServerAppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     private func makeAuthenticatedRoot(session: MessagingServerSession) -> UIViewController {
+        customNavigateToChatControllerHook = nil
+        customMakeChatControllerHook = nil
+
         let client = MessagingServerAPIClient(session: session)
         let navigationController = MessagingServerTelegramRootController(theme: MessagingServerTelegramPresentation.navigationControllerTheme)
         let rootController = MessagingServerTelegramMainTabController(
@@ -173,6 +180,20 @@ final class MessagingServerTelegramMainTabController: TabBarControllerImpl {
                 case .failure:
                     break
                 case let .success(context):
+                    customNavigateToChatControllerHook = { [weak runtimeAdapter] params in
+                        runtimeAdapter?.handleMessagingServerNavigation(params: params) ?? false
+                    }
+                    customMakeChatControllerHook = { [weak runtimeAdapter] context, chatLocation, subject, botStart, mode, params in
+                        runtimeAdapter?.makeMessagingServerChatController(
+                            context: context,
+                            chatLocation: chatLocation,
+                            requestedSubject: subject,
+                            botStart: botStart,
+                            mode: mode,
+                            params: params
+                        )
+                    }
+
                     let chatsController = runtimeAdapter.makeChatListController(context: context)
                     let selectedIndex = self.selectedIndex
                     self.setControllers([chatsController, self.settingsController], selectedIndex: selectedIndex)
@@ -185,5 +206,10 @@ final class MessagingServerTelegramMainTabController: TabBarControllerImpl {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        customNavigateToChatControllerHook = nil
+        customMakeChatControllerHook = nil
     }
 }

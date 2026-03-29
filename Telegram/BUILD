@@ -368,10 +368,12 @@ swift_library(
     deps = [
         ":LibSDKFrameworks",
         "//submodules/AccountContext:AccountContext",
+        "//submodules/AttachmentUI:AttachmentUI",
         "//submodules/AppLock:AppLock",
         "//submodules/BuildConfig:BuildConfig",
         "//submodules/ChatListUI:ChatListUI",
         "//submodules/Display:Display",
+        "//submodules/TelegramUI/Components/ForumCreateTopicScreen:ForumCreateTopicScreen",
         "//submodules/OpenSSLEncryptionProvider:OpenSSLEncryptionProvider",
         "//submodules/Postbox:Postbox",
         "//submodules/SSignalKit/SwiftSignalKit:SwiftSignalKit",
@@ -380,6 +382,7 @@ swift_library(
         "//submodules/TelegramPresentationData:TelegramPresentationData",
         "//submodules/TelegramUI:TelegramUI",
         "//submodules/TelegramUI/Components/NavigationBarImpl:NavigationBarImpl",
+        "//submodules/TelegramUI/Components/Stories/StoryContainerScreen:StoryContainerScreen",
     ],
 )
 

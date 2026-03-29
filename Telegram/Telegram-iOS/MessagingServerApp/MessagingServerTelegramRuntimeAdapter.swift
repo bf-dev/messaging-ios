@@ -1,11 +1,14 @@
 import AccountContext
+import AttachmentUI
 import AppLock
 import BuildConfig
 import ChatListUI
 import Display
+import ForumCreateTopicScreen
 import OpenSSLEncryptionProvider
 import Postbox
 import Security
+import StoryContainerScreen
 import SwiftSignalKit
 import TelegramCore
 import TelegramPresentationData
@@ -205,6 +208,221 @@ final class MessagingServerTelegramRuntimeAdapter {
             selectedImage: UIImage(systemName: "bubble.left.and.bubble.right.fill")
         )
         return controller
+    }
+
+    func inboxSummary(for peerId: PeerId) -> MessagingServerInboxSummary? {
+        return self.snapshotStore.loadInboxes(for: self.session).first(where: { self.peerId(for: $0) == peerId })
+    }
+
+    func makeMessagingServerChatController(
+        context: AccountContext,
+        chatLocation: ChatLocation,
+        chatLocationContextHolder: Atomic<ChatLocationContextHolder?> = Atomic<ChatLocationContextHolder?>(value: nil),
+        requestedSubject: ChatControllerSubject?,
+        botStart: ChatControllerInitialBotStart?,
+        attachBotStart: ChatControllerInitialAttachBotStart? = nil,
+        botAppStart: ChatControllerInitialBotAppStart? = nil,
+        mode: ChatControllerPresentationMode,
+        peekData: ChatPeekTimeout? = nil,
+        peerNearbyData: ChatPeerNearbyData? = nil,
+        chatListFilter: Int32? = nil,
+        chatNavigationStack: [ChatNavigationStackItem] = [],
+        customChatNavigationStack: [EnginePeer.Id]? = nil,
+        params: ChatControllerParams? = nil
+    ) -> ChatControllerImpl? {
+        guard case let .peer(id) = chatLocation, let inbox = self.inboxSummary(for: id) else {
+            return nil
+        }
+
+        let peer = self.makePeer(for: inbox)
+        let contents = MessagingServerTelegramChatContents(
+            context: context,
+            session: self.session,
+            client: self.client,
+            inbox: inbox,
+            peer: peer
+        )
+
+        return ChatControllerImpl(
+            context: context,
+            chatLocation: chatLocation,
+            chatLocationContextHolder: chatLocationContextHolder,
+            subject: .customChatContents(contents: contents),
+            botStart: botStart,
+            attachBotStart: attachBotStart,
+            botAppStart: botAppStart,
+            mode: mode,
+            peekData: peekData,
+            peerNearbyData: peerNearbyData,
+            chatListFilter: chatListFilter,
+            chatNavigationStack: chatNavigationStack,
+            customChatNavigationStack: customChatNavigationStack,
+            params: params
+        )
+    }
+
+    func handleMessagingServerNavigation(params: NavigateToChatControllerParams) -> Bool {
+        guard case let .peer(peer) = params.chatLocation, self.inboxSummary(for: peer.id) != nil else {
+            return false
+        }
+
+        if params.useExisting {
+            var isFirst = true
+            for controller in params.navigationController.viewControllers.reversed() {
+                guard let controller = controller as? ChatControllerImpl else {
+                    isFirst = false
+                    continue
+                }
+                guard controller.chatLocation.peerId == peer.id,
+                      controller.chatLocation.threadId == params.chatLocation.threadId,
+                      Self.isMessagingServerSubject(controller.subject) else {
+                    isFirst = false
+                    continue
+                }
+
+                if let updateTextInputState = params.updateTextInputState {
+                    controller.updateTextInputState(updateTextInputState)
+                }
+
+                var popAndComplete = true
+                if let subject = params.subject,
+                   self.navigateToRequestedSubject(subject, in: controller, navigationController: params.navigationController, animated: isFirst || params.forceAnimatedScroll, completionAnimated: params.animated) {
+                    popAndComplete = false
+                } else if params.scrollToEndIfExists && isFirst {
+                    controller.scrollToEndOfHistory()
+                } else if let search = params.activateMessageSearch {
+                    controller.activateSearch(domain: search.0, query: search.1)
+                } else if let reportReason = params.reportReason {
+                    controller.beginReportSelection(reason: reportReason)
+                }
+
+                if popAndComplete {
+                    if let _ = params.navigationController.viewControllers.last as? AttachmentController,
+                       params.navigationController.viewControllers.count >= 2,
+                       let previousController = params.navigationController.viewControllers[params.navigationController.viewControllers.count - 2] as? ChatControllerImpl,
+                       previousController.chatLocation == params.chatLocation.asChatLocation {
+                    } else {
+                        let _ = params.navigationController.popToViewController(controller, animated: params.animated)
+                    }
+                    params.completion(controller)
+                }
+
+                controller.purposefulAction = params.purposefulAction
+                if let activateInput = params.activateInput {
+                    controller.activateInput(type: activateInput)
+                }
+                if params.changeColors {
+                    controller.presentThemeSelection()
+                }
+                if let attachBotStart = params.attachBotStart {
+                    controller.presentAttachmentBot(botId: attachBotStart.botId, payload: attachBotStart.payload, justInstalled: attachBotStart.justInstalled)
+                }
+                params.setupController(controller)
+                return true
+            }
+        }
+
+        guard let controller = self.makeMessagingServerChatController(
+            context: params.context,
+            chatLocation: params.chatLocation.asChatLocation,
+            chatLocationContextHolder: params.chatLocationContextHolder,
+            requestedSubject: params.subject,
+            botStart: params.botStart,
+            attachBotStart: params.attachBotStart,
+            botAppStart: params.botAppStart,
+            mode: .standard(.default),
+            peekData: params.peekData,
+            peerNearbyData: params.peerNearbyData,
+            chatListFilter: params.chatListFilter,
+            chatNavigationStack: params.chatNavigationStack,
+            customChatNavigationStack: params.customChatNavigationStack,
+            params: nil
+        ) else {
+            return false
+        }
+
+        if let updateTextInputState = params.updateTextInputState,
+           controller.chatLocation.peerId == params.chatLocation.asChatLocation.peerId,
+           controller.chatLocation.threadId == params.chatLocation.asChatLocation.threadId {
+            Queue.mainQueue().after(0.1) {
+                controller.updateTextInputState(updateTextInputState)
+            }
+        }
+
+        controller.purposefulAction = params.purposefulAction
+        if let search = params.activateMessageSearch {
+            controller.activateSearch(domain: search.0, query: search.1)
+        }
+        params.setupController(controller)
+
+        let completion = { [weak self, weak controller] in
+            guard let self, let controller else {
+                return
+            }
+            if let subject = params.subject {
+                _ = self.navigateToRequestedSubject(subject, in: controller, navigationController: params.navigationController, animated: params.forceAnimatedScroll, completionAnimated: params.animated)
+            } else if params.scrollToEndIfExists {
+                controller.scrollToEndOfHistory()
+            }
+            params.completion(controller)
+        }
+
+        let resolvedKeepStack: Bool
+        switch params.keepStack {
+        case .default:
+            if params.navigationController.viewControllers.contains(where: { $0 is StoryContainerScreen }) {
+                resolvedKeepStack = true
+            } else {
+                resolvedKeepStack = params.context.sharedContext.immediateExperimentalUISettings.keepChatNavigationStack
+            }
+        case .always:
+            resolvedKeepStack = true
+        case .never:
+            resolvedKeepStack = false
+        }
+
+        if resolvedKeepStack {
+            if let pushController = params.pushController {
+                pushController(controller, params.animated, completion)
+            } else {
+                params.navigationController.pushViewController(controller, animated: params.animated, completion: completion)
+            }
+        } else {
+            let viewControllers = params.navigationController.viewControllers.filter { controller in
+                if controller is ForumCreateTopicScreen {
+                    return false
+                }
+                if controller is ChatListController {
+                    if let parentGroupId = params.parentGroupId {
+                        return parentGroupId != .root
+                    } else {
+                        return true
+                    }
+                } else if controller is TabBarController {
+                    return true
+                } else {
+                    return false
+                }
+            }
+            if viewControllers.isEmpty {
+                params.navigationController.replaceAllButRootController(controller, animated: params.animated, animationOptions: params.options, completion: completion)
+            } else if params.useBackAnimation {
+                params.navigationController.viewControllers = [controller] + params.navigationController.viewControllers
+                params.navigationController.replaceControllers(controllers: viewControllers + [controller], animated: params.animated, options: params.options, completion: completion)
+            } else {
+                params.navigationController.replaceControllersAndPush(controllers: viewControllers, controller: controller, animated: params.animated, options: params.options, completion: completion)
+            }
+        }
+
+        if let activateInput = params.activateInput {
+            controller.activateInput(type: activateInput)
+        }
+        if params.changeColors {
+            Queue.mainQueue().after(0.1) {
+                controller.presentThemeSelection()
+            }
+        }
+        return true
     }
 
     private func bootstrapContext(completion: @escaping (Result<AccountContext, Error>) -> Void) {
@@ -435,8 +653,7 @@ final class MessagingServerTelegramRuntimeAdapter {
     }
 
     private func makePeer(for inbox: MessagingServerInboxSummary) -> TelegramUser {
-        let rawId = Int64(bitPattern: stableUInt64("inbox|\(inbox.platform.rawValue)|\(inbox.accountKey)|\(inbox.inboxId)")) & 0x0000FFFFFFFFFFFF
-        let peerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(max(1, rawId)))
+        let peerId = self.peerId(for: inbox)
         return TelegramUser(
             id: peerId,
             accessHash: nil,
@@ -458,6 +675,53 @@ final class MessagingServerTelegramRuntimeAdapter {
             subscriberCount: nil,
             verificationIconFileId: nil
         )
+    }
+
+    private func peerId(for inbox: MessagingServerInboxSummary) -> PeerId {
+        let rawId = Int64(bitPattern: stableUInt64("inbox|\(inbox.platform.rawValue)|\(inbox.accountKey)|\(inbox.inboxId)")) & 0x0000FFFFFFFFFFFF
+        return PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(max(1, rawId)))
+    }
+
+    private static func isMessagingServerSubject(_ subject: ChatControllerSubject?) -> Bool {
+        guard case let .customChatContents(contents) = subject else {
+            return false
+        }
+        return contents.kind == .messagingServerChat
+    }
+
+    @discardableResult
+    private func navigateToRequestedSubject(
+        _ subject: ChatControllerSubject,
+        in controller: ChatControllerImpl,
+        navigationController: NavigationController,
+        animated: Bool,
+        completionAnimated: Bool
+    ) -> Bool {
+        guard case let .message(messageSubject, highlight, timecode, setupReply) = subject,
+              case let .id(messageId) = messageSubject else {
+            return false
+        }
+
+        controller.navigateToMessage(
+            messageLocation: .id(
+                messageId,
+                NavigateToMessageParams(
+                    timestamp: timecode,
+                    quote: highlight?.quote.flatMap { NavigateToMessageParams.Quote(string: $0.string, offset: $0.offset) },
+                    setupReply: setupReply
+                )
+            ),
+            animated: animated,
+            completion: { [weak navigationController, weak controller] in
+                if let navigationController, let controller {
+                    let _ = navigationController.popToViewController(controller, animated: completionAnimated)
+                }
+            },
+            customPresentProgress: { [weak navigationController] controller, animation in
+                (navigationController?.viewControllers.last as? ViewController)?.present(controller, in: .window(.root), with: animation)
+            }
+        )
+        return true
     }
 
     private func fallbackMessages(for inbox: MessagingServerInboxSummary) -> [MessagingServerMessage] {

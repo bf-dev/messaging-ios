@@ -144,6 +144,8 @@ final class ChatRestrictedInputPanelNode: ChatInputPanelNode {
             switch customChatContents.kind {
             case .hashTagSearch:
                 displayCount = 0
+            case .messagingServerChat:
+                displayCount = 0
             case .quickReplyMessageInput:
                 displayCount = customChatContents.messageLimit ?? 20
             case .businessLinkSetup:
