@@ -40,6 +40,10 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
 
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let refreshControl = UIRefreshControl()
+    private let emptyStateView = UIStackView()
+    private let emptyStateIconView = UIImageView()
+    private let emptyStateTitleLabel = UILabel()
+    private let emptyStateSubtitleLabel = UILabel()
 
     private let composerContainer = UIStackView()
     private let attachmentScrollView = UIScrollView()
@@ -166,9 +170,34 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         tableView.keyboardDismissMode = .interactive
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 96.0
+        tableView.contentInset = UIEdgeInsets(top: 8.0, left: 0.0, bottom: 8.0, right: 0.0)
 
         refreshControl.addTarget(self, action: #selector(refreshConversation), for: .valueChanged)
         tableView.refreshControl = refreshControl
+
+        emptyStateView.axis = .vertical
+        emptyStateView.spacing = 10.0
+        emptyStateView.alignment = .center
+        emptyStateView.layoutMargins = UIEdgeInsets(top: 24.0, left: 24.0, bottom: 24.0, right: 24.0)
+        emptyStateView.isLayoutMarginsRelativeArrangement = true
+
+        emptyStateIconView.image = UIImage(systemName: "bubble.left.and.bubble.right")
+        emptyStateIconView.tintColor = .secondaryLabel
+        emptyStateIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 26.0, weight: .regular)
+
+        emptyStateTitleLabel.font = UIFont.systemFont(ofSize: 18.0, weight: .semibold)
+        emptyStateTitleLabel.textAlignment = .center
+
+        emptyStateSubtitleLabel.font = UIFont.systemFont(ofSize: 14.0)
+        emptyStateSubtitleLabel.textColor = .secondaryLabel
+        emptyStateSubtitleLabel.numberOfLines = 0
+        emptyStateSubtitleLabel.textAlignment = .center
+
+        emptyStateView.addArrangedSubview(emptyStateIconView)
+        emptyStateView.addArrangedSubview(emptyStateTitleLabel)
+        emptyStateView.addArrangedSubview(emptyStateSubtitleLabel)
+        tableView.backgroundView = emptyStateView
+        tableView.backgroundView?.isHidden = true
 
         view.addSubview(tableView)
     }
@@ -179,9 +208,16 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         composerContainer.translatesAutoresizingMaskIntoConstraints = false
         composerContainer.layoutMargins = UIEdgeInsets(top: 10.0, left: 12.0, bottom: 10.0, right: 12.0)
         composerContainer.isLayoutMarginsRelativeArrangement = true
-        composerContainer.backgroundColor = .secondarySystemBackground
+        composerContainer.backgroundColor = .systemBackground
+        composerContainer.layer.cornerRadius = 20.0
+        composerContainer.layer.cornerCurve = .continuous
+        composerContainer.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         composerContainer.layer.borderWidth = 1.0 / UIScreen.main.scale
         composerContainer.layer.borderColor = UIColor.separator.cgColor
+        composerContainer.layer.shadowColor = UIColor.black.cgColor
+        composerContainer.layer.shadowOpacity = 0.08
+        composerContainer.layer.shadowRadius = 18.0
+        composerContainer.layer.shadowOffset = CGSize(width: 0.0, height: -4.0)
 
         configureHorizontalScroll(attachmentScrollView, stackView: attachmentStack)
         configureHorizontalScroll(suggestedScrollView, stackView: suggestedStack)
@@ -446,6 +482,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         updateAttachmentPills()
         updateSuggestedReplyPills()
         updateComposerState()
+        updateEmptyState()
         updateNavigationSubtitle()
 
         if scrollToBottom {
@@ -511,8 +548,19 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         let hasContent = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !selectedAttachments.isEmpty
         sendButton.isEnabled = hasContent && !isSending
         sendButton.alpha = sendButton.isEnabled ? 1.0 : 0.45
+        sendButton.tintColor = sendButton.isEnabled ? view.tintColor : .tertiaryLabel
         attachButton.isEnabled = !isSending
         textView.isEditable = !isSending
+    }
+
+    private func updateEmptyState() {
+        if rows.isEmpty {
+            emptyStateTitleLabel.text = "No messages yet"
+            emptyStateSubtitleLabel.text = "Send a message, attach a file, or use a suggested reply to start the conversation."
+            tableView.backgroundView?.isHidden = false
+        } else {
+            tableView.backgroundView?.isHidden = true
+        }
     }
 
     private func updateTextViewHeight() {

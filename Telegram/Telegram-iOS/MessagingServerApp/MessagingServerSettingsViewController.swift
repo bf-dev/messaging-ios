@@ -6,6 +6,11 @@ final class MessagingServerSettingsViewController: UITableViewController {
     private let sessionStore: MessagingServerSessionStore
     private let onSessionUpdated: (MessagingServerSession) -> Void
     private let onLogout: () -> Void
+    private let summaryHeaderView = UIView()
+    private let summaryCard = UIView()
+    private let summaryCaptionLabel = UILabel()
+    private let summaryTitleLabel = UILabel()
+    private let summarySubtitleLabel = UILabel()
 
     private var statuses: [MessagingServerPlatformStatus] = []
     private var isRefreshingStatus = false
@@ -36,7 +41,13 @@ final class MessagingServerSettingsViewController: UITableViewController {
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(refreshPressed))
         refreshControl = UIRefreshControl()
         refreshControl?.addTarget(self, action: #selector(refreshPressed), for: .valueChanged)
+        configureHeaderView()
         loadStatus(showSpinner: false)
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateHeaderLayout()
     }
 
     @objc private func refreshPressed() {
@@ -65,11 +76,80 @@ final class MessagingServerSettingsViewController: UITableViewController {
                     }
                     return lhs.platform.displayName < rhs.platform.displayName
                 }
+                self.updateHeaderSummary()
                 self.tableView.reloadData()
             case let .failure(error):
+                self.updateHeaderSummary()
                 self.presentMessagingServerError(error, title: "Status Refresh Failed")
             }
         }
+    }
+
+    private func configureHeaderView() {
+        summaryHeaderView.frame = CGRect(x: 0.0, y: 0.0, width: view.bounds.width, height: 136.0)
+
+        summaryCard.applyMessagingServerCardStyle(backgroundColor: .secondarySystemBackground)
+        summaryHeaderView.addSubview(summaryCard)
+
+        summaryCaptionLabel.font = UIFont.systemFont(ofSize: 13.0, weight: .semibold)
+        summaryCaptionLabel.textColor = .secondaryLabel
+        summaryCaptionLabel.text = "CONNECTED SERVER"
+
+        summaryTitleLabel.font = UIFont.systemFont(ofSize: 20.0, weight: .bold)
+        summaryTitleLabel.numberOfLines = 2
+
+        summarySubtitleLabel.font = UIFont.systemFont(ofSize: 14.0)
+        summarySubtitleLabel.textColor = .secondaryLabel
+        summarySubtitleLabel.numberOfLines = 0
+
+        let stack = UIStackView(arrangedSubviews: [summaryCaptionLabel, summaryTitleLabel, summarySubtitleLabel])
+        stack.axis = .vertical
+        stack.spacing = 6.0
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        summaryCard.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: summaryCard.topAnchor, constant: 16.0),
+            stack.leadingAnchor.constraint(equalTo: summaryCard.leadingAnchor, constant: 16.0),
+            stack.trailingAnchor.constraint(equalTo: summaryCard.trailingAnchor, constant: -16.0),
+            stack.bottomAnchor.constraint(equalTo: summaryCard.bottomAnchor, constant: -16.0),
+        ])
+
+        updateHeaderSummary()
+        tableView.tableHeaderView = summaryHeaderView
+        updateHeaderLayout()
+    }
+
+    private func updateHeaderLayout() {
+        guard tableView.tableHeaderView === summaryHeaderView else {
+            return
+        }
+
+        let width = tableView.bounds.width
+        guard width > 0.0 else {
+            return
+        }
+
+        let headerFrame = CGRect(x: 0.0, y: 0.0, width: width, height: 136.0)
+        let cardFrame = CGRect(x: 16.0, y: 10.0, width: max(width - 32.0, 0.0), height: 116.0)
+        guard summaryHeaderView.frame != headerFrame || summaryCard.frame != cardFrame else {
+            return
+        }
+
+        summaryHeaderView.frame = headerFrame
+        summaryCard.frame = cardFrame
+        tableView.tableHeaderView = summaryHeaderView
+    }
+
+    private func updateHeaderSummary() {
+        let authenticatedCount = statuses.filter(\.authenticated).count
+        summaryTitleLabel.text = session.displayBaseURL
+        summarySubtitleLabel.text = [
+            authenticatedCount == 0
+                ? "No authenticated accounts reported yet."
+                : "\(authenticatedCount) authenticated account\(authenticatedCount == 1 ? "" : "s") ready.",
+            "API key: \(session.maskedApiKey)",
+        ].joined(separator: "\n")
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int {

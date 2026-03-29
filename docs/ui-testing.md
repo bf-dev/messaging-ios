@@ -1,5 +1,7 @@
 # UI Testing
 
+For manual simulator validation of the Messaging Server app flow, see `docs/ios-simulator-qa.md`.
+
 ## Running Tests
 
 ```bash

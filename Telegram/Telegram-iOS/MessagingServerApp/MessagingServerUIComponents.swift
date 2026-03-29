@@ -41,28 +41,77 @@ final class MessagingServerPrimaryButton: UIButton {
         configureAppearance()
     }
 
+    override var isEnabled: Bool {
+        didSet {
+            updateAppearance(animated: false)
+        }
+    }
+
+    override var isHighlighted: Bool {
+        didSet {
+            updateAppearance(animated: true)
+        }
+    }
+
     private func configureAppearance() {
-        backgroundColor = tintColor
-        tintColor = .white
         layer.cornerRadius = 14.0
         layer.cornerCurve = .continuous
         titleLabel?.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
         contentEdgeInsets = UIEdgeInsets(top: 14.0, left: 18.0, bottom: 14.0, right: 18.0)
+        setTitleColor(.white, for: .normal)
+        setTitleColor(UIColor.white.withAlphaComponent(0.92), for: .disabled)
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.12
+        layer.shadowRadius = 16.0
+        layer.shadowOffset = CGSize(width: 0.0, height: 8.0)
 
         spinner.hidesWhenStopped = true
+        spinner.color = .white
         spinner.translatesAutoresizingMaskIntoConstraints = false
         addSubview(spinner)
         NSLayoutConstraint.activate([
             spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
             spinner.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16.0),
         ])
+
+        updateAppearance(animated: false)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: layer.cornerRadius).cgPath
+    }
+
+    override func tintColorDidChange() {
+        super.tintColorDidChange()
+        updateAppearance(animated: false)
+    }
+
+    private func updateAppearance(animated: Bool) {
+        let apply = {
+            let fillColor = self.window?.tintColor ?? self.superview?.tintColor ?? .systemBlue
+            self.backgroundColor = self.isEnabled
+                ? fillColor.withAlphaComponent(self.isHighlighted ? 0.84 : 1.0)
+                : fillColor.withAlphaComponent(0.55)
+            self.transform = self.isHighlighted ? CGAffineTransform(scaleX: 0.99, y: 0.99) : .identity
+            self.layer.shadowOpacity = self.isEnabled ? 0.12 : 0.0
+        }
+
+        guard animated else {
+            apply()
+            return
+        }
+
+        UIView.animate(withDuration: 0.14, delay: 0.0, options: [.beginFromCurrentState, .curveEaseOut], animations: {
+            apply()
+        })
     }
 
     func setLoading(_ loading: Bool) {
         isEnabled = !loading
         if loading {
             spinner.startAnimating()
-            alpha = 0.9
+            alpha = 0.96
         } else {
             spinner.stopAnimating()
             alpha = 1.0
@@ -81,18 +130,62 @@ final class MessagingServerInputField: UITextField {
         configureAppearance()
     }
 
+    override var placeholder: String? {
+        didSet {
+            updatePlaceholderAppearance()
+        }
+    }
+
     private func configureAppearance() {
         borderStyle = .none
         backgroundColor = .secondarySystemBackground
         layer.cornerRadius = 14.0
         layer.cornerCurve = .continuous
+        layer.borderWidth = 1.0 / UIScreen.main.scale
         clearButtonMode = .whileEditing
         autocorrectionType = .no
         autocapitalizationType = .none
         spellCheckingType = .no
-        leftView = UIView(frame: CGRect(x: 0.0, y: 0.0, width: 14.0, height: 10.0))
+        font = UIFont.systemFont(ofSize: 16.0)
+        textColor = .label
+        tintColor = .systemBlue
+        leftView = UIView(frame: CGRect(x: 0.0, y: 0.0, width: 16.0, height: 10.0))
         leftViewMode = .always
         heightAnchor.constraint(equalToConstant: 52.0).isActive = true
+        updatePlaceholderAppearance()
+        updateBorderAppearance()
+    }
+
+    override func tintColorDidChange() {
+        super.tintColorDidChange()
+        updatePlaceholderAppearance()
+        updateBorderAppearance()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let didBecome = super.becomeFirstResponder()
+        updateBorderAppearance()
+        return didBecome
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let didResign = super.resignFirstResponder()
+        updateBorderAppearance()
+        return didResign
+    }
+
+    private func updatePlaceholderAppearance() {
+        attributedPlaceholder = placeholder.map {
+            NSAttributedString(
+                string: $0,
+                attributes: [.foregroundColor: UIColor.secondaryLabel]
+            )
+        }
+    }
+
+    private func updateBorderAppearance() {
+        layer.borderColor = (isFirstResponder ? tintColor : UIColor.separator.withAlphaComponent(0.55)).cgColor
+        backgroundColor = isFirstResponder ? .systemBackground : .secondarySystemBackground
     }
 }
 
@@ -316,6 +409,11 @@ final class MessagingServerChatListCell: UITableViewCell {
         selectionStyle = .default
         accessoryType = .none
         separatorInset = UIEdgeInsets(top: 0.0, left: 72.0, bottom: 0.0, right: 16.0)
+        backgroundColor = .systemBackground
+        contentView.backgroundColor = .systemBackground
+        let selectedView = UIView()
+        selectedView.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.08)
+        selectedBackgroundView = selectedView
 
         avatarView.translatesAutoresizingMaskIntoConstraints = false
         avatarView.widthAnchor.constraint(equalToConstant: 52.0).isActive = true
@@ -386,14 +484,18 @@ final class MessagingServerChatListCell: UITableViewCell {
     }
 
     func configure(_ configuration: MessagingServerChatListItemConfiguration, session: MessagingServerSession) {
+        let isUnread = configuration.unreadCount > 0
         titleLabel.text = configuration.title
+        titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: isUnread ? .semibold : .medium)
         subtitleLabel.text = configuration.subtitle
+        subtitleLabel.textColor = isUnread ? .label : .secondaryLabel
         detailLabel.text = configuration.detail
         detailLabel.isHidden = configuration.detail?.isEmpty ?? true
         timestampLabel.text = configuration.timestamp
         timestampLabel.isHidden = configuration.timestamp.isEmpty
+        timestampLabel.textColor = isUnread ? tintColor : .secondaryLabel
         unreadBadgeLabel.isHidden = configuration.unreadCount == 0
-        unreadBadgeLabel.text = configuration.unreadCount > 0 ? "\(configuration.unreadCount)" : nil
+        unreadBadgeLabel.text = configuration.unreadCount > 0 ? "\(min(configuration.unreadCount, 99))\(configuration.unreadCount > 99 ? "+" : "")" : nil
         avatarView.configure(session: session, asset: configuration.avatarAsset, title: configuration.avatarTitle)
     }
 }
@@ -586,9 +688,31 @@ final class MessagingServerBubbleCell: UITableViewCell {
             footerLabel.textColor = .tertiaryLabel
         }
 
-        bubbleView.layer.borderWidth = configuration.isFailed ? 1.0 : 0.0
-        bubbleView.layer.borderColor = configuration.isFailed ? UIColor.systemRed.withAlphaComponent(0.45).cgColor : nil
+        if configuration.isFailed {
+            bubbleView.layer.borderWidth = 1.0
+            bubbleView.layer.borderColor = UIColor.systemRed.withAlphaComponent(0.45).cgColor
+        } else if configuration.isOutgoing {
+            bubbleView.layer.borderWidth = 0.0
+            bubbleView.layer.borderColor = nil
+        } else {
+            bubbleView.layer.borderWidth = 1.0 / UIScreen.main.scale
+            bubbleView.layer.borderColor = UIColor.separator.withAlphaComponent(0.35).cgColor
+        }
         bubbleView.alpha = configuration.isPending ? 0.82 : 1.0
+    }
+}
+
+extension UIView {
+    func applyMessagingServerCardStyle(backgroundColor: UIColor = .secondarySystemBackground) {
+        self.backgroundColor = backgroundColor
+        layer.cornerRadius = 18.0
+        layer.cornerCurve = .continuous
+        layer.borderWidth = 1.0 / UIScreen.main.scale
+        layer.borderColor = UIColor.separator.withAlphaComponent(0.3).cgColor
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.06
+        layer.shadowRadius = 18.0
+        layer.shadowOffset = CGSize(width: 0.0, height: 8.0)
     }
 }
 

@@ -11,6 +11,10 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let refreshControl = UIRefreshControl()
     private let searchController = UISearchController(searchResultsController: nil)
+    private let emptyStateView = UIStackView()
+    private let emptyStateIconView = UIImageView()
+    private let emptyStateTitleLabel = UILabel()
+    private let emptyStateSubtitleLabel = UILabel()
 
     private var platformStatuses: [MessagingServerPlatformStatus] = []
     private var inboxes: [MessagingServerInboxSummary] = []
@@ -44,6 +48,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         configureNavigation()
         configureSummaryCard()
         configureTableView()
+        configureEmptyState()
         updateConnectionState(.disconnected)
         applyFilteringAndReload()
     }
@@ -78,9 +83,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
 
     private func configureSummaryCard() {
         summaryCard.translatesAutoresizingMaskIntoConstraints = false
-        summaryCard.backgroundColor = .secondarySystemBackground
-        summaryCard.layer.cornerRadius = 18.0
-        summaryCard.layer.cornerCurve = .continuous
+        summaryCard.applyMessagingServerCardStyle(backgroundColor: .secondarySystemBackground)
 
         let headerStack = UIStackView()
         headerStack.translatesAutoresizingMaskIntoConstraints = false
@@ -136,6 +139,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 86.0
         tableView.keyboardDismissMode = .onDrag
+        tableView.contentInset = UIEdgeInsets(top: 4.0, left: 0.0, bottom: 12.0, right: 0.0)
 
         refreshControl.addTarget(self, action: #selector(refreshPressed), for: .valueChanged)
         tableView.refreshControl = refreshControl
@@ -147,6 +151,32 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+    }
+
+    private func configureEmptyState() {
+        emptyStateView.axis = .vertical
+        emptyStateView.spacing = 10.0
+        emptyStateView.alignment = .center
+        emptyStateView.layoutMargins = UIEdgeInsets(top: 24.0, left: 24.0, bottom: 24.0, right: 24.0)
+        emptyStateView.isLayoutMarginsRelativeArrangement = true
+
+        emptyStateIconView.image = UIImage(systemName: "bubble.left.and.bubble.right")
+        emptyStateIconView.tintColor = .secondaryLabel
+        emptyStateIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 28.0, weight: .regular)
+
+        emptyStateTitleLabel.font = UIFont.systemFont(ofSize: 19.0, weight: .semibold)
+        emptyStateTitleLabel.textColor = .label
+
+        emptyStateSubtitleLabel.font = UIFont.systemFont(ofSize: 14.0)
+        emptyStateSubtitleLabel.textColor = .secondaryLabel
+        emptyStateSubtitleLabel.numberOfLines = 0
+        emptyStateSubtitleLabel.textAlignment = .center
+
+        emptyStateView.addArrangedSubview(emptyStateIconView)
+        emptyStateView.addArrangedSubview(emptyStateTitleLabel)
+        emptyStateView.addArrangedSubview(emptyStateSubtitleLabel)
+        tableView.backgroundView = emptyStateView
+        tableView.backgroundView?.isHidden = true
     }
 
     @objc private func refreshPressed() {
@@ -321,6 +351,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
 
         tableView.reloadData()
         updateSummary()
+        updateEmptyState()
     }
 
     private func updateSummary() {
@@ -346,6 +377,30 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
             stateText,
             "Server: \(session.displayBaseURL)",
         ].joined(separator: "\n")
+    }
+
+    private func updateEmptyState() {
+        let searchText = searchController.searchBar.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let hasFilters = selectedPlatform != nil || selectedAccount != nil
+
+        if displayedInboxes.isEmpty {
+            if !hasLoadedOnce {
+                emptyStateTitleLabel.text = "Loading chats"
+                emptyStateSubtitleLabel.text = "Checking your connected accounts and recent conversations."
+            } else if !searchText.isEmpty || hasFilters {
+                emptyStateTitleLabel.text = "No chats match"
+                emptyStateSubtitleLabel.text = "Try a different search term or clear the active filters."
+            } else {
+                emptyStateTitleLabel.text = "No chats yet"
+                emptyStateSubtitleLabel.text = "Connect an account on the server, then pull to refresh this list."
+            }
+
+            tableView.backgroundView?.isHidden = false
+            tableView.separatorStyle = .none
+        } else {
+            tableView.backgroundView?.isHidden = true
+            tableView.separatorStyle = .singleLine
+        }
     }
 
     @objc private func showFilters(_ sender: UIBarButtonItem) {
@@ -428,21 +483,10 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        max(displayedInboxes.count, 1)
+        displayedInboxes.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        guard !displayedInboxes.isEmpty else {
-            let cell = UITableViewCell(style: .subtitle, reuseIdentifier: "EmptyCell")
-            cell.selectionStyle = .none
-            cell.textLabel?.text = "No chats found"
-            cell.detailTextLabel?.text = searchController.searchBar.text?.isEmpty == false
-                ? "Try a different search term."
-                : "Pull to refresh or adjust the filter menu."
-            cell.detailTextLabel?.numberOfLines = 0
-            return cell
-        }
-
         guard let cell = tableView.dequeueReusableCell(withIdentifier: "ChatListCell", for: indexPath) as? MessagingServerChatListCell else {
             return UITableViewCell()
         }

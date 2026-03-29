@@ -11,7 +11,7 @@ final class MessagingServerWelcomeViewController: UIViewController {
     private let symbolImageView = UIImageView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
-    private let serverLabel = UILabel()
+    private let serverLabel = PaddingLabel()
     private let featureStack = UIStackView()
     private let continueButton = MessagingServerPrimaryButton(frame: .zero)
 
@@ -45,6 +45,7 @@ final class MessagingServerWelcomeViewController: UIViewController {
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
         contentView.addSubview(stackView)
+        scrollView.keyboardDismissMode = .interactive
 
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -113,6 +114,13 @@ final class MessagingServerWelcomeViewController: UIViewController {
         serverLabel.textColor = .secondaryLabel
         serverLabel.numberOfLines = 0
         serverLabel.textAlignment = .center
+        serverLabel.textInsets = UIEdgeInsets(top: 12.0, left: 14.0, bottom: 12.0, right: 14.0)
+        serverLabel.backgroundColor = .secondarySystemBackground
+        serverLabel.layer.cornerRadius = 16.0
+        serverLabel.layer.cornerCurve = .continuous
+        serverLabel.layer.borderWidth = 1.0 / UIScreen.main.scale
+        serverLabel.layer.borderColor = UIColor.separator.withAlphaComponent(0.3).cgColor
+        serverLabel.layer.masksToBounds = true
 
         featureStack.axis = .vertical
         featureStack.spacing = 12.0
@@ -126,6 +134,7 @@ final class MessagingServerWelcomeViewController: UIViewController {
 
         continueButton.setTitle("Get Started", for: .normal)
         continueButton.addTarget(self, action: #selector(continuePressed), for: .touchUpInside)
+        continueButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 54.0).isActive = true
 
         stackView.addArrangedSubview(symbolRow)
         stackView.addArrangedSubview(titleLabel)
@@ -133,6 +142,9 @@ final class MessagingServerWelcomeViewController: UIViewController {
         stackView.addArrangedSubview(serverLabel)
         stackView.addArrangedSubview(featureStack)
         stackView.addArrangedSubview(continueButton)
+        stackView.setCustomSpacing(14.0, after: subtitleLabel)
+        stackView.setCustomSpacing(24.0, after: serverLabel)
+        stackView.setCustomSpacing(28.0, after: featureStack)
     }
 
     private func makeFeatureRow(iconName: String, text: String) -> UIView {
@@ -150,7 +162,21 @@ final class MessagingServerWelcomeViewController: UIViewController {
         stack.axis = .horizontal
         stack.spacing = 12.0
         stack.alignment = .top
-        return stack
+
+        let container = UIView()
+        container.applyMessagingServerCardStyle(backgroundColor: .secondarySystemBackground)
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 14.0),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14.0),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14.0),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14.0),
+        ])
+
+        return container
     }
 
     @objc private func continuePressed() {
