@@ -31,6 +31,14 @@ jobs:
           cp -R $GITHUB_WORKSPACE /Users/Shared/
           mv /Users/Shared/$(basename $GITHUB_WORKSPACE) /Users/Shared/telegram-ios
 
+      - name: Run local Swift lint
+        run: |
+          set -euxo pipefail
+          cd /Users/Shared/telegram-ios
+          python3 scripts/lint_swift_local.py \
+            Telegram/Telegram-iOS/MessagingServerApp \
+            Telegram/Tests/Sources
+
       - name: Build the App
         run: |
           set -x

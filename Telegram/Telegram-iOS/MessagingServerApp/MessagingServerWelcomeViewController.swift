@@ -30,6 +30,7 @@ final class MessagingServerWelcomeViewController: UIViewController {
         view.backgroundColor = .systemBackground
         navigationItem.largeTitleDisplayMode = .never
         navigationItem.title = "Messaging Server"
+        view.accessibilityIdentifier = "messaging.welcome.screen"
 
         configureLayout()
         configureContent()
@@ -95,12 +96,14 @@ final class MessagingServerWelcomeViewController: UIViewController {
         titleLabel.font = UIFont.systemFont(ofSize: 33.0, weight: .bold)
         titleLabel.numberOfLines = 0
         titleLabel.textAlignment = .center
+        titleLabel.adjustsFontForContentSizeCategory = true
 
         subtitleLabel.text = "Connect with your messaging-server API key, browse chats faster, and approve outgoing actions inline without the app getting stuck on connect."
         subtitleLabel.font = UIFont.systemFont(ofSize: 16.0)
         subtitleLabel.textColor = .secondaryLabel
         subtitleLabel.numberOfLines = 0
         subtitleLabel.textAlignment = .center
+        subtitleLabel.adjustsFontForContentSizeCategory = true
 
         let serverText: String
         let defaultURL = sessionStore.lastBaseURLString()
@@ -115,12 +118,14 @@ final class MessagingServerWelcomeViewController: UIViewController {
         serverLabel.numberOfLines = 0
         serverLabel.textAlignment = .center
         serverLabel.textInsets = UIEdgeInsets(top: 12.0, left: 14.0, bottom: 12.0, right: 14.0)
+        serverLabel.adjustsFontForContentSizeCategory = true
         serverLabel.backgroundColor = .secondarySystemBackground
         serverLabel.layer.cornerRadius = 16.0
         serverLabel.layer.cornerCurve = .continuous
         serverLabel.layer.borderWidth = 1.0 / UIScreen.main.scale
         serverLabel.layer.borderColor = UIColor.separator.withAlphaComponent(0.3).cgColor
         serverLabel.layer.masksToBounds = true
+        serverLabel.accessibilityIdentifier = "messaging.welcome.server"
 
         featureStack.axis = .vertical
         featureStack.spacing = 12.0
@@ -135,6 +140,8 @@ final class MessagingServerWelcomeViewController: UIViewController {
         continueButton.setTitle("Get Started", for: .normal)
         continueButton.addTarget(self, action: #selector(continuePressed), for: .touchUpInside)
         continueButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 54.0).isActive = true
+        continueButton.accessibilityIdentifier = "messaging.welcome.continue"
+        continueButton.accessibilityHint = "Opens the API key connection screen."
 
         stackView.addArrangedSubview(symbolRow)
         stackView.addArrangedSubview(titleLabel)

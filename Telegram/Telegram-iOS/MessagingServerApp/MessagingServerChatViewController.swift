@@ -94,6 +94,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         navigationItem.largeTitleDisplayMode = .never
+        view.accessibilityIdentifier = "messaging.chat.screen"
         configureTitleView()
         configureTableView()
         configureComposer()
@@ -133,15 +134,20 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         titleTextLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
         titleTextLabel.text = inbox.displayTitle
         titleTextLabel.textAlignment = .center
+        titleTextLabel.adjustsFontForContentSizeCategory = true
 
         subtitleTextLabel.font = UIFont.systemFont(ofSize: 12.0)
         subtitleTextLabel.textColor = .secondaryLabel
         subtitleTextLabel.textAlignment = .center
+        subtitleTextLabel.adjustsFontForContentSizeCategory = true
 
         titleStack.addArrangedSubview(titleTextLabel)
         titleStack.addArrangedSubview(subtitleTextLabel)
         navigationItem.titleView = titleStack
-        navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), style: .plain, target: self, action: #selector(showConversationInfo))
+        let infoItem = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), style: .plain, target: self, action: #selector(showConversationInfo))
+        infoItem.accessibilityIdentifier = "messaging.chat.info"
+        infoItem.accessibilityLabel = "Conversation info"
+        navigationItem.rightBarButtonItem = infoItem
     }
 
     private func updateNavigationSubtitle() {
@@ -171,6 +177,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 96.0
         tableView.contentInset = UIEdgeInsets(top: 8.0, left: 0.0, bottom: 8.0, right: 0.0)
+        tableView.accessibilityIdentifier = "messaging.chat.table"
 
         refreshControl.addTarget(self, action: #selector(refreshConversation), for: .valueChanged)
         tableView.refreshControl = refreshControl
@@ -180,6 +187,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         emptyStateView.alignment = .center
         emptyStateView.layoutMargins = UIEdgeInsets(top: 24.0, left: 24.0, bottom: 24.0, right: 24.0)
         emptyStateView.isLayoutMarginsRelativeArrangement = true
+        emptyStateView.accessibilityIdentifier = "messaging.chat.emptyState"
 
         emptyStateIconView.image = UIImage(systemName: "bubble.left.and.bubble.right")
         emptyStateIconView.tintColor = .secondaryLabel
@@ -230,9 +238,12 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         attachButton.setImage(attachImage, for: .normal)
         attachButton.tintColor = view.tintColor
         attachButton.addTarget(self, action: #selector(attachPressed(_:)), for: .touchUpInside)
+        attachButton.accessibilityIdentifier = "messaging.chat.attach"
+        attachButton.accessibilityLabel = "Add attachment"
 
         textView.delegate = self
         textView.font = UIFont.systemFont(ofSize: 16.0)
+        textView.adjustsFontForContentSizeCategory = true
         textView.layer.cornerRadius = 18.0
         textView.layer.cornerCurve = .continuous
         textView.layer.borderWidth = 1.0
@@ -246,10 +257,13 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         textViewHeightConstraint = textView.heightAnchor.constraint(equalToConstant: 40.0)
         textViewHeightConstraint?.isActive = true
         textView.widthAnchor.constraint(greaterThanOrEqualToConstant: 120.0).isActive = true
+        textView.accessibilityIdentifier = "messaging.chat.input"
+        textView.accessibilityLabel = "Message"
 
         placeholderLabel.text = "Message"
         placeholderLabel.textColor = .placeholderText
         placeholderLabel.font = UIFont.systemFont(ofSize: 16.0)
+        placeholderLabel.adjustsFontForContentSizeCategory = true
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         textView.addSubview(placeholderLabel)
         NSLayoutConstraint.activate([
@@ -261,6 +275,8 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         sendButton.setImage(sendImage, for: .normal)
         sendButton.tintColor = view.tintColor
         sendButton.addTarget(self, action: #selector(sendPressed), for: .touchUpInside)
+        sendButton.accessibilityIdentifier = "messaging.chat.send"
+        sendButton.accessibilityLabel = "Send message"
 
         composerSpinner.hidesWhenStopped = true
         composerSpinner.setContentHuggingPriority(.required, for: .horizontal)
@@ -275,6 +291,8 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         composerContainer.addArrangedSubview(suggestedScrollView)
         composerContainer.addArrangedSubview(composerRow)
         view.addSubview(composerContainer)
+        attachmentScrollView.accessibilityIdentifier = "messaging.chat.attachments"
+        suggestedScrollView.accessibilityIdentifier = "messaging.chat.suggestions"
 
         composerBottomConstraint = composerContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         composerBottomConstraint?.isActive = true
@@ -893,7 +911,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         textView.text = reply.text
         updateTextViewHeight()
         updateComposerState()
-        textView.becomeFirstResponder()
+        _ = textView.becomeFirstResponder()
     }
 
     @objc private func addSuggestedReplyPressed() {
@@ -946,19 +964,10 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        max(rows.count, 1)
+        rows.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        guard !rows.isEmpty else {
-            let cell = UITableViewCell(style: .subtitle, reuseIdentifier: "Empty")
-            cell.selectionStyle = .none
-            cell.textLabel?.text = "No messages yet"
-            cell.detailTextLabel?.text = "Send a message or pin a suggested reply to get started."
-            cell.detailTextLabel?.numberOfLines = 0
-            return cell
-        }
-
         guard let cell = tableView.dequeueReusableCell(withIdentifier: "BubbleCell", for: indexPath) as? MessagingServerBubbleCell else {
             return UITableViewCell()
         }
@@ -966,8 +975,10 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         switch rows[indexPath.row] {
         case let .message(message):
             cell.configure(bubbleConfiguration(for: message), session: session)
+            cell.accessibilityIdentifier = "messaging.chat.message.\(message.messageId)"
         case let .pending(operation):
             cell.configure(bubbleConfiguration(for: operation), session: session)
+            cell.accessibilityIdentifier = "messaging.chat.pending.\(operation.operationId)"
         }
         return cell
     }

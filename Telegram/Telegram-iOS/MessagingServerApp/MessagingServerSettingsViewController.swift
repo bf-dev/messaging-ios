@@ -38,7 +38,11 @@ final class MessagingServerSettingsViewController: UITableViewController {
         super.viewDidLoad()
         title = "Settings"
         navigationItem.largeTitleDisplayMode = .always
-        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(refreshPressed))
+        view.accessibilityIdentifier = "messaging.settings.screen"
+        tableView.accessibilityIdentifier = "messaging.settings.table"
+        let refreshItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(refreshPressed))
+        refreshItem.accessibilityIdentifier = "messaging.settings.refresh"
+        navigationItem.rightBarButtonItem = refreshItem
         refreshControl = UIRefreshControl()
         refreshControl?.addTarget(self, action: #selector(refreshPressed), for: .valueChanged)
         configureHeaderView()
@@ -89,18 +93,22 @@ final class MessagingServerSettingsViewController: UITableViewController {
         summaryHeaderView.frame = CGRect(x: 0.0, y: 0.0, width: view.bounds.width, height: 136.0)
 
         summaryCard.applyMessagingServerCardStyle(backgroundColor: .secondarySystemBackground)
+        summaryCard.accessibilityIdentifier = "messaging.settings.summaryCard"
         summaryHeaderView.addSubview(summaryCard)
 
         summaryCaptionLabel.font = UIFont.systemFont(ofSize: 13.0, weight: .semibold)
         summaryCaptionLabel.textColor = .secondaryLabel
         summaryCaptionLabel.text = "CONNECTED SERVER"
+        summaryCaptionLabel.adjustsFontForContentSizeCategory = true
 
         summaryTitleLabel.font = UIFont.systemFont(ofSize: 20.0, weight: .bold)
         summaryTitleLabel.numberOfLines = 2
+        summaryTitleLabel.adjustsFontForContentSizeCategory = true
 
         summarySubtitleLabel.font = UIFont.systemFont(ofSize: 14.0)
         summarySubtitleLabel.textColor = .secondaryLabel
         summarySubtitleLabel.numberOfLines = 0
+        summarySubtitleLabel.adjustsFontForContentSizeCategory = true
 
         let stack = UIStackView(arrangedSubviews: [summaryCaptionLabel, summaryTitleLabel, summarySubtitleLabel])
         stack.axis = .vertical
@@ -194,6 +202,7 @@ final class MessagingServerSettingsViewController: UITableViewController {
         cell.detailTextLabel?.numberOfLines = 0
         cell.selectionStyle = .none
         cell.accessoryType = .none
+        cell.accessibilityIdentifier = "messaging.settings.section\(indexPath.section).row\(indexPath.row)"
 
         switch indexPath.section {
         case 0:

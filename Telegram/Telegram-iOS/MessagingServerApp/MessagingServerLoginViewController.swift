@@ -54,6 +54,7 @@ final class MessagingServerLoginViewController: UIViewController, UITextFieldDel
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         navigationItem.largeTitleDisplayMode = .never
+        view.accessibilityIdentifier = "messaging.login.screen"
 
         configureFields()
         configureLayout()
@@ -66,7 +67,7 @@ final class MessagingServerLoginViewController: UIViewController, UITextFieldDel
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         if (apiKeyField.text ?? "").isEmpty {
-            apiKeyField.becomeFirstResponder()
+            _ = apiKeyField.becomeFirstResponder()
         }
     }
 
@@ -78,6 +79,8 @@ final class MessagingServerLoginViewController: UIViewController, UITextFieldDel
         baseURLField.returnKeyType = .next
         baseURLField.delegate = self
         baseURLField.textContentType = .URL
+        baseURLField.accessibilityIdentifier = "messaging.login.serverUrl"
+        baseURLField.accessibilityLabel = "Server URL"
 
         apiKeyField.placeholder = "Paste your messaging-server API key"
         apiKeyField.keyboardType = .asciiCapable
@@ -85,6 +88,8 @@ final class MessagingServerLoginViewController: UIViewController, UITextFieldDel
         apiKeyField.returnKeyType = .go
         apiKeyField.delegate = self
         apiKeyField.textContentType = .password
+        apiKeyField.accessibilityIdentifier = "messaging.login.apiKey"
+        apiKeyField.accessibilityLabel = "API key"
         apiKeyField.addTarget(self, action: #selector(textFieldEditingChanged), for: .editingChanged)
         baseURLField.addTarget(self, action: #selector(textFieldEditingChanged), for: .editingChanged)
 
@@ -92,6 +97,7 @@ final class MessagingServerLoginViewController: UIViewController, UITextFieldDel
         revealButton.setTitle("Show", for: .normal)
         revealButton.titleLabel?.font = UIFont.systemFont(ofSize: 14.0, weight: .semibold)
         revealButton.addTarget(self, action: #selector(toggleAPIKeyVisibility(_:)), for: .touchUpInside)
+        revealButton.accessibilityIdentifier = "messaging.login.toggleApiKeyVisibility"
         apiKeyField.rightView = revealButton
         apiKeyField.rightViewMode = .always
 
@@ -120,35 +126,42 @@ final class MessagingServerLoginViewController: UIViewController, UITextFieldDel
         titleLabel.font = UIFont.systemFont(ofSize: 31.0, weight: .bold)
         titleLabel.numberOfLines = 0
         titleLabel.textAlignment = .center
+        titleLabel.adjustsFontForContentSizeCategory = true
 
         subtitleLabel.font = UIFont.systemFont(ofSize: 16.0)
         subtitleLabel.textColor = .secondaryLabel
         subtitleLabel.numberOfLines = 0
         subtitleLabel.textAlignment = .center
+        subtitleLabel.adjustsFontForContentSizeCategory = true
 
         apiKeyCaptionLabel.font = UIFont.systemFont(ofSize: 13.0, weight: .semibold)
         apiKeyCaptionLabel.textColor = .secondaryLabel
         apiKeyCaptionLabel.text = "API KEY"
+        apiKeyCaptionLabel.adjustsFontForContentSizeCategory = true
 
         baseURLSummaryLabel.font = UIFont.systemFont(ofSize: 14.0)
         baseURLSummaryLabel.textColor = .secondaryLabel
         baseURLSummaryLabel.numberOfLines = 0
         baseURLSummaryLabel.textInsets = UIEdgeInsets(top: 12.0, left: 14.0, bottom: 12.0, right: 14.0)
+        baseURLSummaryLabel.adjustsFontForContentSizeCategory = true
         baseURLSummaryLabel.backgroundColor = .secondarySystemBackground
         baseURLSummaryLabel.layer.cornerRadius = 16.0
         baseURLSummaryLabel.layer.cornerCurve = .continuous
         baseURLSummaryLabel.layer.borderWidth = 1.0 / UIScreen.main.scale
         baseURLSummaryLabel.layer.borderColor = UIColor.separator.withAlphaComponent(0.3).cgColor
         baseURLSummaryLabel.layer.masksToBounds = true
+        baseURLSummaryLabel.accessibilityIdentifier = "messaging.login.serverSummary"
 
         advancedButton.titleLabel?.font = UIFont.systemFont(ofSize: 15.0, weight: .semibold)
         advancedButton.contentHorizontalAlignment = .leading
         advancedButton.contentEdgeInsets = UIEdgeInsets(top: 6.0, left: 2.0, bottom: 6.0, right: 2.0)
         advancedButton.addTarget(self, action: #selector(toggleServerField), for: .touchUpInside)
+        advancedButton.accessibilityIdentifier = "messaging.login.advanced"
 
         serverCaptionLabel.font = UIFont.systemFont(ofSize: 13.0, weight: .semibold)
         serverCaptionLabel.textColor = .secondaryLabel
         serverCaptionLabel.text = "SERVER"
+        serverCaptionLabel.adjustsFontForContentSizeCategory = true
 
         serverContainer.axis = .vertical
         serverContainer.spacing = 8.0
@@ -160,14 +173,18 @@ final class MessagingServerLoginViewController: UIViewController, UITextFieldDel
         timeoutLabel.numberOfLines = 0
         timeoutLabel.textAlignment = .center
         timeoutLabel.text = "We verify the connection before saving. Connect automatically times out after 10 seconds so the button never hangs."
+        timeoutLabel.adjustsFontForContentSizeCategory = true
 
         footerNoteLabel.font = UIFont.systemFont(ofSize: 13.0)
         footerNoteLabel.textColor = .tertiaryLabel
         footerNoteLabel.numberOfLines = 0
         footerNoteLabel.textAlignment = .center
+        footerNoteLabel.adjustsFontForContentSizeCategory = true
 
         connectButton.addTarget(self, action: #selector(connectPressed), for: .touchUpInside)
         connectButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 54.0).isActive = true
+        connectButton.accessibilityIdentifier = "messaging.login.connect"
+        connectButton.accessibilityHint = "Validates the server URL and API key."
     }
 
     private func configureLayout() {
@@ -366,7 +383,7 @@ final class MessagingServerLoginViewController: UIViewController, UITextFieldDel
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         if textField === baseURLField {
-            apiKeyField.becomeFirstResponder()
+            _ = apiKeyField.becomeFirstResponder()
         } else {
             connectPressed()
         }

@@ -412,7 +412,7 @@ struct MessagingServerOperationView: Codable, Equatable {
     let uploadAssetIds: [String]
     let uploadAssets: [MessagingServerCachedAsset]
     let replacementOperationId: String?
-    let localAttachmentNames: [String]? = nil
+    let localAttachmentNames: [String]?
 
     var isPendingBubble: Bool {
         guard operationType == .sendMessage else {

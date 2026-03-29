@@ -2,6 +2,16 @@
 
 For manual simulator validation of the Messaging Server app flow, see `docs/ios-simulator-qa.md`.
 
+## Local Swift lint
+
+Run the lightweight local Swift lint before pushing Messaging Server app changes:
+
+```bash
+python3 scripts/lint_swift_local.py \
+  Telegram/Telegram-iOS/MessagingServerApp \
+  Telegram/Tests/Sources
+```
+
 ## Running Tests
 
 ```bash

@@ -45,6 +45,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         view.backgroundColor = .systemBackground
         title = "Chats"
         navigationItem.largeTitleDisplayMode = .always
+        view.accessibilityIdentifier = "messaging.chats.screen"
         configureNavigation()
         configureSummaryCard()
         configureTableView()
@@ -73,17 +74,22 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         searchController.obscuresBackgroundDuringPresentation = false
         searchController.searchResultsUpdater = self
         searchController.searchBar.placeholder = "Search chats"
+        searchController.searchBar.searchTextField.accessibilityIdentifier = "messaging.chats.search"
         navigationItem.searchController = searchController
         navigationItem.hidesSearchBarWhenScrolling = false
 
         let refreshItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(refreshPressed))
+        refreshItem.accessibilityIdentifier = "messaging.chats.refresh"
         let filterItem = UIBarButtonItem(image: UIImage(systemName: "line.3.horizontal.decrease.circle"), style: .plain, target: self, action: #selector(showFilters(_:)))
+        filterItem.accessibilityIdentifier = "messaging.chats.filters"
+        filterItem.accessibilityLabel = "Filters"
         navigationItem.rightBarButtonItems = [refreshItem, filterItem]
     }
 
     private func configureSummaryCard() {
         summaryCard.translatesAutoresizingMaskIntoConstraints = false
         summaryCard.applyMessagingServerCardStyle(backgroundColor: .secondarySystemBackground)
+        summaryCard.accessibilityIdentifier = "messaging.chats.summaryCard"
 
         let headerStack = UIStackView()
         headerStack.translatesAutoresizingMaskIntoConstraints = false
@@ -98,12 +104,15 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
 
         summaryTitleLabel.font = UIFont.systemFont(ofSize: 18.0, weight: .semibold)
         summaryTitleLabel.numberOfLines = 1
+        summaryTitleLabel.adjustsFontForContentSizeCategory = true
 
         connectionBadgeLabel.font = UIFont.systemFont(ofSize: 12.0, weight: .semibold)
         connectionBadgeLabel.textInsets = UIEdgeInsets(top: 5.0, left: 8.0, bottom: 5.0, right: 8.0)
         connectionBadgeLabel.layer.cornerRadius = 12.0
         connectionBadgeLabel.layer.cornerCurve = .continuous
         connectionBadgeLabel.layer.masksToBounds = true
+        connectionBadgeLabel.adjustsFontForContentSizeCategory = true
+        connectionBadgeLabel.accessibilityIdentifier = "messaging.chats.connectionBadge"
 
         titleRow.addArrangedSubview(summaryTitleLabel)
         titleRow.addArrangedSubview(UIView())
@@ -112,6 +121,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         summarySubtitleLabel.font = UIFont.systemFont(ofSize: 14.0)
         summarySubtitleLabel.textColor = .secondaryLabel
         summarySubtitleLabel.numberOfLines = 0
+        summarySubtitleLabel.adjustsFontForContentSizeCategory = true
 
         headerStack.addArrangedSubview(titleRow)
         headerStack.addArrangedSubview(summarySubtitleLabel)
@@ -140,6 +150,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         tableView.estimatedRowHeight = 86.0
         tableView.keyboardDismissMode = .onDrag
         tableView.contentInset = UIEdgeInsets(top: 4.0, left: 0.0, bottom: 12.0, right: 0.0)
+        tableView.accessibilityIdentifier = "messaging.chats.table"
 
         refreshControl.addTarget(self, action: #selector(refreshPressed), for: .valueChanged)
         tableView.refreshControl = refreshControl
@@ -159,6 +170,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         emptyStateView.alignment = .center
         emptyStateView.layoutMargins = UIEdgeInsets(top: 24.0, left: 24.0, bottom: 24.0, right: 24.0)
         emptyStateView.isLayoutMarginsRelativeArrangement = true
+        emptyStateView.accessibilityIdentifier = "messaging.chats.emptyState"
 
         emptyStateIconView.image = UIImage(systemName: "bubble.left.and.bubble.right")
         emptyStateIconView.tintColor = .secondaryLabel
@@ -492,6 +504,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         }
 
         let inbox = displayedInboxes[indexPath.row]
+        cell.accessibilityIdentifier = "messaging.chats.cell.\(inbox.inboxId)"
         let accountName = platformStatuses.accountName(for: inbox.accountKey) ?? inbox.accountKey
         let configuration = MessagingServerChatListItemConfiguration(
             title: inbox.displayTitle,

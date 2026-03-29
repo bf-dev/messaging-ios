@@ -105,7 +105,7 @@ final class MessagingServerAPIClient {
             path: "/v1/platforms/status",
             queryItems: [],
             timeout: timeout,
-            completion: { result in
+            completion: { (result: Result<[MessagingServerPlatformStatus], Error>) in
                 gate.run {
                     timeoutWorkItem.cancel()
                     switch result {

@@ -15,6 +15,7 @@ final class MessagingServerPillButton: UIButton {
 
     private func configureAppearance() {
         titleLabel?.font = UIFont.systemFont(ofSize: 13.0, weight: .medium)
+        titleLabel?.adjustsFontForContentSizeCategory = true
         layer.cornerRadius = 16.0
         layer.cornerCurve = .continuous
         layer.borderWidth = 1.0
@@ -57,11 +58,11 @@ final class MessagingServerPrimaryButton: UIButton {
         layer.cornerRadius = 14.0
         layer.cornerCurve = .continuous
         titleLabel?.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
+        titleLabel?.adjustsFontForContentSizeCategory = true
         contentEdgeInsets = UIEdgeInsets(top: 14.0, left: 18.0, bottom: 14.0, right: 18.0)
         setTitleColor(.white, for: .normal)
         setTitleColor(UIColor.white.withAlphaComponent(0.92), for: .disabled)
         layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.12
         layer.shadowRadius = 16.0
         layer.shadowOffset = CGSize(width: 0.0, height: 8.0)
 
@@ -94,7 +95,8 @@ final class MessagingServerPrimaryButton: UIButton {
                 ? fillColor.withAlphaComponent(self.isHighlighted ? 0.84 : 1.0)
                 : fillColor.withAlphaComponent(0.55)
             self.transform = self.isHighlighted ? CGAffineTransform(scaleX: 0.99, y: 0.99) : .identity
-            self.layer.shadowOpacity = self.isEnabled ? 0.12 : 0.0
+            let baseShadowOpacity: Float = self.traitCollection.userInterfaceStyle == .dark ? 0.18 : 0.12
+            self.layer.shadowOpacity = self.isEnabled ? baseShadowOpacity : 0.0
         }
 
         guard animated else {
@@ -147,6 +149,7 @@ final class MessagingServerInputField: UITextField {
         autocapitalizationType = .none
         spellCheckingType = .no
         font = UIFont.systemFont(ofSize: 16.0)
+        adjustsFontForContentSizeCategory = true
         textColor = .label
         tintColor = .systemBlue
         leftView = UIView(frame: CGRect(x: 0.0, y: 0.0, width: 16.0, height: 10.0))
@@ -421,18 +424,22 @@ final class MessagingServerChatListCell: UITableViewCell {
 
         titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
         titleLabel.numberOfLines = 1
+        titleLabel.adjustsFontForContentSizeCategory = true
 
         subtitleLabel.font = UIFont.systemFont(ofSize: 15.0)
         subtitleLabel.textColor = .label
         subtitleLabel.numberOfLines = 2
+        subtitleLabel.adjustsFontForContentSizeCategory = true
 
         detailLabel.font = UIFont.systemFont(ofSize: 12.5, weight: .medium)
         detailLabel.textColor = .secondaryLabel
         detailLabel.numberOfLines = 1
+        detailLabel.adjustsFontForContentSizeCategory = true
 
         timestampLabel.font = UIFont.systemFont(ofSize: 12.0, weight: .medium)
         timestampLabel.textColor = .secondaryLabel
         timestampLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        timestampLabel.adjustsFontForContentSizeCategory = true
 
         unreadBadgeLabel.font = UIFont.systemFont(ofSize: 12.0, weight: .bold)
         unreadBadgeLabel.textColor = .white
@@ -442,6 +449,7 @@ final class MessagingServerChatListCell: UITableViewCell {
         unreadBadgeLabel.layer.masksToBounds = true
         unreadBadgeLabel.textInsets = UIEdgeInsets(top: 4.0, left: 8.0, bottom: 4.0, right: 8.0)
         unreadBadgeLabel.textAlignment = .center
+        unreadBadgeLabel.adjustsFontForContentSizeCategory = true
 
         trailingStack.axis = .vertical
         trailingStack.alignment = .trailing
@@ -560,6 +568,7 @@ final class MessagingServerBubbleCell: UITableViewCell {
 
         titleLabel.font = UIFont.systemFont(ofSize: 12.0, weight: .semibold)
         titleLabel.numberOfLines = 2
+        titleLabel.adjustsFontForContentSizeCategory = true
 
         replyLabel.font = UIFont.systemFont(ofSize: 12.0, weight: .medium)
         replyLabel.numberOfLines = 2
@@ -568,9 +577,11 @@ final class MessagingServerBubbleCell: UITableViewCell {
         replyLabel.layer.cornerCurve = .continuous
         replyLabel.layer.masksToBounds = true
         replyLabel.textInsets = UIEdgeInsets(top: 6.0, left: 8.0, bottom: 6.0, right: 8.0)
+        replyLabel.adjustsFontForContentSizeCategory = true
 
         bodyLabel.font = UIFont.systemFont(ofSize: 16.0)
         bodyLabel.numberOfLines = 0
+        bodyLabel.adjustsFontForContentSizeCategory = true
 
         previewStack.axis = .horizontal
         previewStack.spacing = 6.0
@@ -578,12 +589,15 @@ final class MessagingServerBubbleCell: UITableViewCell {
 
         attachmentsLabel.font = UIFont.systemFont(ofSize: 13.0)
         attachmentsLabel.numberOfLines = 0
+        attachmentsLabel.adjustsFontForContentSizeCategory = true
 
         reactionsLabel.font = UIFont.systemFont(ofSize: 13.0, weight: .medium)
         reactionsLabel.numberOfLines = 2
+        reactionsLabel.adjustsFontForContentSizeCategory = true
 
         footerLabel.font = UIFont.systemFont(ofSize: 11.0, weight: .medium)
         footerLabel.numberOfLines = 2
+        footerLabel.adjustsFontForContentSizeCategory = true
 
         [titleLabel, replyLabel, bodyLabel, previewStack, attachmentsLabel, reactionsLabel, footerLabel].forEach(contentStack.addArrangedSubview)
 
