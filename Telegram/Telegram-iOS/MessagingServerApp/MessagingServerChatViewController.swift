@@ -33,6 +33,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     private let session: MessagingServerSession
     private let client: MessagingServerAPIClient
     private let inbox: MessagingServerInboxSummary
+    private let snapshotStore = MessagingServerSnapshotStore.shared
 
     private let chatBackgroundView = MessagingServerChatBackgroundView()
     private let titleContainer = UIStackView()
@@ -74,6 +75,10 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     private var connectionState: MessagingServerRealtimeState = .disconnected
     private var lastMarkedReadMessageId: String?
     private var isSending = false
+    private var isRefreshingFromServer = false
+    private var hasCompletedInitialLoad = false
+    private var hasPerformedInitialScroll = false
+    private var loadFailureMessage: String?
     private var hasWarnedAboutOperations = false
     private var hasWarnedAboutSuggestedReplies = false
 
@@ -107,7 +112,8 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         updateSuggestedReplyPills()
         updateComposerState()
         updateNavigationSubtitle()
-        loadConversation(showSpinner: true)
+        loadCachedConversationIfAvailable()
+        loadConversation(showSpinner: false)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -117,6 +123,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        performInitialScrollIfNeeded(animated: false)
         markVisibleMessagesReadIfNeeded()
     }
 
@@ -395,7 +402,18 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     }
 
     @objc private func refreshConversation() {
-        loadConversation(showSpinner: false)
+        loadConversation(showSpinner: true)
+    }
+
+    private func loadCachedConversationIfAvailable() {
+        guard let snapshot = snapshotStore.loadConversation(inboxId: inbox.inboxId, for: session) else {
+            return
+        }
+
+        messages = snapshot.messages.filter { $0.deletedAt == nil }
+        serverOperations = snapshot.operations
+        suggestedReplies = sortedSuggestedReplies(snapshot.suggestedReplies)
+        rebuildRows(scrollToBottom: false)
     }
 
     private func startRealtime() {
@@ -428,10 +446,18 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     }
 
     private func loadConversation(showSpinner: Bool) {
-        let shouldScrollToBottom = showSpinner || isNearBottom()
-        if showSpinner {
-            composerSpinner.startAnimating()
+        guard !isRefreshingFromServer else {
+            if showSpinner {
+                refreshControl.endRefreshing()
+            }
+            return
         }
+
+        isRefreshingFromServer = true
+        loadFailureMessage = nil
+        updateEmptyState()
+
+        let shouldScrollToBottom = rows.isEmpty || isNearBottom()
 
         let group = DispatchGroup()
         var messagesResult: Result<[MessagingServerMessage], Error>?
@@ -460,18 +486,19 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             guard let self else {
                 return
             }
+            self.isRefreshingFromServer = false
+            self.hasCompletedInitialLoad = true
             self.refreshControl.endRefreshing()
-            if showSpinner {
-                self.composerSpinner.stopAnimating()
-            }
+            var shouldPersistSnapshot = false
 
             switch messagesResult {
             case let .success(messages):
                 self.messages = messages.filter { $0.deletedAt == nil }
+                self.loadFailureMessage = nil
+                shouldPersistSnapshot = true
             case let .failure(error):
-                if showSpinner {
-                    self.presentMessagingServerError(error, title: "Unable to Load Messages")
-                } else {
+                self.loadFailureMessage = error.localizedDescription
+                if showSpinner || self.rows.isEmpty {
                     self.showMessagingServerToast(error.localizedDescription)
                 }
             case .none:
@@ -484,6 +511,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
                 self.optimisticOperations.removeAll { local in
                     operations.contains(where: { $0.operationId == local.operationId }) || !local.isPendingBubble
                 }
+                shouldPersistSnapshot = true
             case let .failure(error):
                 if !self.hasWarnedAboutOperations {
                     self.hasWarnedAboutOperations = true
@@ -495,12 +523,8 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
 
             switch repliesResult {
             case let .success(replies):
-                self.suggestedReplies = replies.sorted { lhs, rhs in
-                    if lhs.orderIndex == rhs.orderIndex {
-                        return lhs.createdAt < rhs.createdAt
-                    }
-                    return lhs.orderIndex < rhs.orderIndex
-                }
+                self.suggestedReplies = self.sortedSuggestedReplies(replies)
+                shouldPersistSnapshot = true
             case let .failure(error):
                 if !self.hasWarnedAboutSuggestedReplies {
                     self.hasWarnedAboutSuggestedReplies = true
@@ -510,8 +534,30 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
                 break
             }
 
+            if shouldPersistSnapshot {
+                self.snapshotStore.saveConversation(
+                    MessagingServerConversationSnapshot(
+                        messages: self.messages,
+                        operations: self.serverOperations,
+                        suggestedReplies: self.suggestedReplies,
+                        updatedAt: MessagingServerDate.nowString()
+                    ),
+                    inboxId: self.inbox.inboxId,
+                    for: self.session
+                )
+            }
+
             self.rebuildRows(scrollToBottom: shouldScrollToBottom)
             self.markVisibleMessagesReadIfNeeded()
+        }
+    }
+
+    private func sortedSuggestedReplies(_ replies: [MessagingServerSuggestedReply]) -> [MessagingServerSuggestedReply] {
+        replies.sorted { lhs, rhs in
+            if lhs.orderIndex == rhs.orderIndex {
+                return lhs.createdAt < rhs.createdAt
+            }
+            return lhs.orderIndex < rhs.orderIndex
         }
     }
 
@@ -609,8 +655,16 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
 
     private func updateEmptyState() {
         if rows.isEmpty {
-            emptyStateTitleLabel.text = "No messages yet"
-            emptyStateSubtitleLabel.text = "Send a message, attach a file, or use a suggested reply to start the conversation."
+            if isRefreshingFromServer && messages.isEmpty && optimisticOperations.isEmpty {
+                emptyStateTitleLabel.text = "Loading conversation"
+                emptyStateSubtitleLabel.text = "Recent messages will appear here as soon as the server responds."
+            } else if let loadFailureMessage, messages.isEmpty && optimisticOperations.isEmpty, hasCompletedInitialLoad {
+                emptyStateTitleLabel.text = "Unable to load conversation"
+                emptyStateSubtitleLabel.text = "\(loadFailureMessage)\n\nPull down to try again."
+            } else {
+                emptyStateTitleLabel.text = "No messages yet"
+                emptyStateSubtitleLabel.text = "Send a message, attach a file, or use a suggested reply to start the conversation."
+            }
             tableView.backgroundView?.isHidden = false
         } else {
             tableView.backgroundView?.isHidden = true
@@ -1429,6 +1483,14 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             self.tableView.scrollToRow(at: indexPath, at: .bottom, animated: animated)
             self.markVisibleMessagesReadIfNeeded()
         }
+    }
+
+    private func performInitialScrollIfNeeded(animated: Bool) {
+        guard !hasPerformedInitialScroll, view.window != nil, !rows.isEmpty else {
+            return
+        }
+        hasPerformedInitialScroll = true
+        scrollToBottom(animated: animated)
     }
 
     private func visibleMessageIdForReadState() -> String? {

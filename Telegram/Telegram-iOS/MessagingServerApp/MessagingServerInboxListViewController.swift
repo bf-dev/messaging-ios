@@ -3,6 +3,7 @@ import UIKit
 final class MessagingServerInboxListViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UISearchResultsUpdating {
     private let session: MessagingServerSession
     private let client: MessagingServerAPIClient
+    private let snapshotStore = MessagingServerSnapshotStore.shared
 
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let refreshControl = UIRefreshControl()
@@ -17,7 +18,9 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
     private var realtimeClient: MessagingServerRealtimeClient?
     private var scheduledRefresh: DispatchWorkItem?
     private var connectionState: MessagingServerRealtimeState = .disconnected
-    private var hasLoadedOnce = false
+    private var isRefreshingFromServer = false
+    private var hasCompletedInitialLoad = false
+    private var loadFailureMessage: String?
 
     init(session: MessagingServerSession, client: MessagingServerAPIClient) {
         self.session = session
@@ -43,13 +46,13 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         configureNavigation()
         configureTableView()
         configureEmptyState()
+        loadCachedInboxes()
         applyFilteringAndReload()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         startRealtime()
-        hasLoadedOnce = true
         loadInboxes(showRefreshControl: false)
     }
 
@@ -128,7 +131,26 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         loadInboxes(showRefreshControl: true)
     }
 
+    private func loadCachedInboxes() {
+        let cachedInboxes = snapshotStore.loadInboxes(for: session)
+        guard !cachedInboxes.isEmpty else {
+            return
+        }
+        inboxes = cachedInboxes
+    }
+
     private func loadInboxes(showRefreshControl: Bool) {
+        guard !isRefreshingFromServer else {
+            if showRefreshControl {
+                refreshControl.endRefreshing()
+            }
+            return
+        }
+
+        isRefreshingFromServer = true
+        loadFailureMessage = nil
+        updateEmptyState()
+
         if showRefreshControl && !refreshControl.isRefreshing {
             refreshControl.beginRefreshing()
         }
@@ -137,13 +159,21 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
             guard let self else {
                 return
             }
+            self.isRefreshingFromServer = false
+            self.hasCompletedInitialLoad = true
             self.refreshControl.endRefreshing()
             switch result {
             case let .success(inboxes):
                 self.inboxes = inboxes
+                self.snapshotStore.saveInboxes(inboxes, for: self.session)
+                self.loadFailureMessage = nil
                 self.applyFilteringAndReload()
             case let .failure(error):
-                self.presentMessagingServerError(error, title: "Inbox Refresh Failed")
+                self.loadFailureMessage = error.localizedDescription
+                self.updateEmptyState()
+                if self.inboxes.isEmpty || showRefreshControl {
+                    self.showMessagingServerToast(error.localizedDescription)
+                }
             }
         }
     }
@@ -178,6 +208,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
 
     private func updateConnectionState(_ state: MessagingServerRealtimeState) {
         connectionState = state
+        updateEmptyState()
     }
 
     private func applyFilteringAndReload() {
@@ -212,12 +243,15 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         let searchText = searchController.searchBar.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if displayedInboxes.isEmpty {
-            if !hasLoadedOnce {
+            if (!hasCompletedInitialLoad || isRefreshingFromServer) && inboxes.isEmpty {
                 emptyStateTitleLabel.text = "Loading chats"
-                emptyStateSubtitleLabel.text = "Fetching the latest conversations from your connected messaging accounts."
+                emptyStateSubtitleLabel.text = "Showing your chats as soon as the latest server snapshot arrives."
             } else if !searchText.isEmpty {
                 emptyStateTitleLabel.text = "No chats found"
                 emptyStateSubtitleLabel.text = "Try a different search term."
+            } else if let loadFailureMessage, inboxes.isEmpty, hasCompletedInitialLoad {
+                emptyStateTitleLabel.text = "Unable to load chats"
+                emptyStateSubtitleLabel.text = "\(loadFailureMessage)\n\nPull down to try again."
             } else {
                 let stateText: String
                 switch connectionState {
