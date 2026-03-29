@@ -1,7 +1,8 @@
 import MobileCoreServices
+import Display
 import UIKit
 
-final class MessagingServerChatViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UITextViewDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate {
+final class MessagingServerChatViewController: ViewController, UITableViewDataSource, UITableViewDelegate, UITextViewDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate {
     private enum Row {
         case message(MessagingServerMessage)
         case pending(MessagingServerOperationView)
@@ -86,7 +87,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         self.session = session
         self.client = client
         self.inbox = inbox
-        super.init(nibName: nil, bundle: nil)
+        super.init(navigationBarPresentationData: MessagingServerTelegramPresentation.navigationBarPresentationData())
     }
 
     required init?(coder: NSCoder) {

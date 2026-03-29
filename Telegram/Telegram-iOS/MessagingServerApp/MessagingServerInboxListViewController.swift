@@ -1,6 +1,7 @@
+import Display
 import UIKit
 
-final class MessagingServerInboxListViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UISearchResultsUpdating {
+final class MessagingServerInboxListViewController: ViewController, UITableViewDataSource, UITableViewDelegate, UISearchResultsUpdating {
     private let session: MessagingServerSession
     private let client: MessagingServerAPIClient
     private let snapshotStore = MessagingServerSnapshotStore.shared
@@ -25,7 +26,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
     init(session: MessagingServerSession, client: MessagingServerAPIClient) {
         self.session = session
         self.client = client
-        super.init(nibName: nil, bundle: nil)
+        super.init(navigationBarPresentationData: MessagingServerTelegramPresentation.navigationBarPresentationData())
     }
 
     required init?(coder: NSCoder) {

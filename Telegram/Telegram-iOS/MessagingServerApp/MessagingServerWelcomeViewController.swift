@@ -1,6 +1,7 @@
+import Display
 import UIKit
 
-final class MessagingServerWelcomeViewController: UIViewController {
+final class MessagingServerWelcomeViewController: ViewController {
     private let sessionStore: MessagingServerSessionStore
     private let onContinue: (UIViewController) -> Void
 
@@ -18,7 +19,7 @@ final class MessagingServerWelcomeViewController: UIViewController {
     init(sessionStore: MessagingServerSessionStore, onContinue: @escaping (UIViewController) -> Void) {
         self.sessionStore = sessionStore
         self.onContinue = onContinue
-        super.init(nibName: nil, bundle: nil)
+        super.init(navigationBarPresentationData: MessagingServerTelegramPresentation.navigationBarPresentationData())
     }
 
     required init?(coder: NSCoder) {

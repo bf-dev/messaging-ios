@@ -1,6 +1,7 @@
+import Display
 import UIKit
 
-final class MessagingServerLoginViewController: UIViewController, UITextFieldDelegate {
+final class MessagingServerLoginViewController: ViewController, UITextFieldDelegate {
     enum Mode {
         case onboarding
         case edit(currentSession: MessagingServerSession)
@@ -38,7 +39,7 @@ final class MessagingServerLoginViewController: UIViewController, UITextFieldDel
         self.mode = mode
         self.sessionStore = sessionStore
         self.onLogin = onLogin
-        super.init(nibName: nil, bundle: nil)
+        super.init(navigationBarPresentationData: MessagingServerTelegramPresentation.navigationBarPresentationData())
     }
 
     required init?(coder: NSCoder) {

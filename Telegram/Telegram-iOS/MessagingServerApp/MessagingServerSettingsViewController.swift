@@ -1,11 +1,15 @@
+import Display
 import UIKit
 
-final class MessagingServerSettingsViewController: UITableViewController {
+final class MessagingServerSettingsViewController: ViewController, UITableViewDataSource, UITableViewDelegate {
     private let session: MessagingServerSession
     private let client: MessagingServerAPIClient
     private let sessionStore: MessagingServerSessionStore
     private let onSessionUpdated: (MessagingServerSession) -> Void
     private let onLogout: () -> Void
+
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+    private let refreshControlView = UIRefreshControl()
     private let summaryHeaderView = UIView()
     private let summaryCard = UIView()
     private let summaryCaptionLabel = UILabel()
@@ -27,7 +31,7 @@ final class MessagingServerSettingsViewController: UITableViewController {
         self.sessionStore = sessionStore
         self.onSessionUpdated = onSessionUpdated
         self.onLogout = onLogout
-        super.init(style: .insetGrouped)
+        super.init(navigationBarPresentationData: MessagingServerTelegramPresentation.navigationBarPresentationData())
     }
 
     required init?(coder: NSCoder) {
@@ -37,21 +41,40 @@ final class MessagingServerSettingsViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Settings"
-        navigationItem.largeTitleDisplayMode = .always
+        navigationItem.largeTitleDisplayMode = .never
+        view.backgroundColor = .systemGroupedBackground
         view.accessibilityIdentifier = "messaging.settings.screen"
-        tableView.accessibilityIdentifier = "messaging.settings.table"
+
+        configureTableView()
+        configureHeaderView()
+
         let refreshItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(refreshPressed))
         refreshItem.accessibilityIdentifier = "messaging.settings.refresh"
         navigationItem.rightBarButtonItem = refreshItem
-        refreshControl = UIRefreshControl()
-        refreshControl?.addTarget(self, action: #selector(refreshPressed), for: .valueChanged)
-        configureHeaderView()
+
         loadStatus(showSpinner: false)
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateHeaderLayout()
+    }
+
+    private func configureTableView() {
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.accessibilityIdentifier = "messaging.settings.table"
+        tableView.refreshControl = refreshControlView
+        refreshControlView.addTarget(self, action: #selector(refreshPressed), for: .valueChanged)
+
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
     }
 
     @objc private func refreshPressed() {
@@ -64,14 +87,14 @@ final class MessagingServerSettingsViewController: UITableViewController {
         }
         isRefreshingStatus = true
         if showSpinner {
-            refreshControl?.beginRefreshing()
+            refreshControlView.beginRefreshing()
         }
         client.listPlatformStatus { [weak self] result in
             guard let self else {
                 return
             }
             self.isRefreshingStatus = false
-            self.refreshControl?.endRefreshing()
+            self.refreshControlView.endRefreshing()
             switch result {
             case let .success(statuses):
                 self.statuses = statuses.sorted { lhs, rhs in
@@ -160,11 +183,11 @@ final class MessagingServerSettingsViewController: UITableViewController {
         ].joined(separator: "\n")
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
+    func numberOfSections(in tableView: UITableView) -> Int {
         3
     }
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         switch section {
         case 0:
             return 3
@@ -175,7 +198,7 @@ final class MessagingServerSettingsViewController: UITableViewController {
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+    func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
         switch section {
         case 0:
             return "Connection"
@@ -186,7 +209,7 @@ final class MessagingServerSettingsViewController: UITableViewController {
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+    func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
         switch section {
         case 0:
             return "Credentials stay in the iOS keychain. Editing the connection validates first, then replaces the saved session only after success."
@@ -197,7 +220,7 @@ final class MessagingServerSettingsViewController: UITableViewController {
         }
     }
 
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
         cell.detailTextLabel?.numberOfLines = 0
         cell.selectionStyle = .none
@@ -251,7 +274,7 @@ final class MessagingServerSettingsViewController: UITableViewController {
         return cell
     }
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
 
         switch indexPath.section {

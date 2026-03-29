@@ -367,6 +367,10 @@ swift_library(
     data = [],
     deps = [
         ":LibSDKFrameworks",
+        "//submodules/Display:Display",
+        "//submodules/TabBarUI:TabBarUI",
+        "//submodules/TelegramPresentationData:TelegramPresentationData",
+        "//submodules/TelegramUI/Components/NavigationBarImpl:NavigationBarImpl",
     ],
 )
 

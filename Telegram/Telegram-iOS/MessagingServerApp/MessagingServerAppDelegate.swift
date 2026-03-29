@@ -1,3 +1,6 @@
+import Display
+import NavigationBarImpl
+import TabBarUI
 import UIKit
 
 @objc(MessagingServerAppDelegate)
@@ -10,6 +13,9 @@ final class MessagingServerAppDelegate: UIResponder, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        defaultNavigationBarImpl = { presentationData in
+            NavigationBarImpl(presentationData: presentationData)
+        }
         configureAppearance()
 
         let window = UIWindow(frame: UIScreen.main.bounds)
@@ -75,14 +81,14 @@ final class MessagingServerAppDelegate: UIResponder, UIApplicationDelegate {
             navigationController.pushViewController(credentials, animated: true)
         }
 
-        let navigationController = UINavigationController(rootViewController: welcome)
-        navigationController.navigationBar.prefersLargeTitles = true
+        let navigationController = NavigationController(mode: .single, theme: MessagingServerTelegramPresentation.navigationControllerTheme)
+        navigationController.setViewControllers([welcome], animated: false)
         return navigationController
     }
 
     private func makeAuthenticatedRoot(session: MessagingServerSession) -> UIViewController {
         let client = MessagingServerAPIClient(session: session)
-        return MessagingServerMainTabBarController(
+        let rootController = MessagingServerTelegramMainTabController(
             session: session,
             client: client,
             sessionStore: context.sessionStore,
@@ -94,10 +100,13 @@ final class MessagingServerAppDelegate: UIResponder, UIApplicationDelegate {
                 self?.installRoot(animated: true)
             }
         )
+        let navigationController = NavigationController(mode: .automaticMasterDetail, theme: MessagingServerTelegramPresentation.navigationControllerTheme)
+        navigationController.setViewControllers([rootController], animated: false)
+        return navigationController
     }
 }
 
-final class MessagingServerMainTabBarController: UITabBarController {
+final class MessagingServerTelegramMainTabController: TabBarControllerImpl {
     init(
         session: MessagingServerSession,
         client: MessagingServerAPIClient,
@@ -105,13 +114,14 @@ final class MessagingServerMainTabBarController: UITabBarController {
         onSessionUpdated: @escaping (MessagingServerSession) -> Void,
         onLogout: @escaping () -> Void
     ) {
-        super.init(nibName: nil, bundle: nil)
+        let presentationData = MessagingServerTelegramPresentation.presentationData
+        super.init(theme: presentationData.theme, strings: presentationData.strings)
+        navigationPresentation = .master
 
         let inboxes = MessagingServerInboxListViewController(session: session, client: client)
         inboxes.title = "Chats"
-        let inboxNavigation = UINavigationController(rootViewController: inboxes)
-        inboxNavigation.navigationBar.prefersLargeTitles = true
-        inboxNavigation.tabBarItem = UITabBarItem(
+        inboxes.navigationPresentation = .master
+        inboxes.tabBarItem = UITabBarItem(
             title: "Chats",
             image: UIImage(systemName: "bubble.left.and.bubble.right"),
             selectedImage: UIImage(systemName: "bubble.left.and.bubble.right.fill")
@@ -125,16 +135,14 @@ final class MessagingServerMainTabBarController: UITabBarController {
             onLogout: onLogout
         )
         settings.title = "Settings"
-        let settingsNavigation = UINavigationController(rootViewController: settings)
-        settingsNavigation.navigationBar.prefersLargeTitles = true
-        settingsNavigation.tabBarItem = UITabBarItem(
+        settings.navigationPresentation = .master
+        settings.tabBarItem = UITabBarItem(
             title: "Settings",
             image: UIImage(systemName: "gearshape"),
             selectedImage: UIImage(systemName: "gearshape.fill")
         )
 
-        viewControllers = [inboxNavigation, settingsNavigation]
-        tabBar.isTranslucent = false
+        setControllers([inboxes, settings], selectedIndex: 0)
     }
 
     required init?(coder: NSCoder) {
