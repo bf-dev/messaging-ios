@@ -44,7 +44,7 @@ final class MessagingServerSessionStore {
     private let keychain = MessagingServerKeychain(service: "insu.messaging-server.ios", account: "default-api-key")
 
     func loadSession() -> MessagingServerSession? {
-        guard let apiKey = try? keychain.read(), !apiKey.isEmpty else {
+        guard let apiKey = currentAPIKey(), !apiKey.isEmpty else {
             return nil
         }
         let rawBaseURL = defaults.string(forKey: baseURLKey) ?? Self.defaultBaseURL
@@ -54,12 +54,18 @@ final class MessagingServerSessionStore {
         return MessagingServerSession(baseURL: baseURL, apiKey: apiKey)
     }
 
-    func lastBaseURLString() -> String {
-        return defaults.string(forKey: baseURLKey) ?? Self.defaultBaseURL
+    func currentAPIKey() -> String? {
+        guard let apiKey = try? keychain.read(), !apiKey.isEmpty else {
+            return nil
+        }
+        return apiKey
     }
 
-    @discardableResult
-    func save(baseURLString: String, apiKey: String) throws -> MessagingServerSession {
+    func lastBaseURLString() -> String {
+        defaults.string(forKey: baseURLKey) ?? Self.defaultBaseURL
+    }
+
+    func makeDraftSession(baseURLString: String, apiKey: String) throws -> MessagingServerSession {
         guard let baseURL = Self.normalizeBaseURL(baseURLString) else {
             throw MessagingServerSessionStoreError.invalidBaseURL
         }
@@ -67,9 +73,19 @@ final class MessagingServerSessionStore {
         guard !trimmedKey.isEmpty else {
             throw MessagingServerSessionStoreError.emptyAPIKey
         }
-        defaults.set(baseURL.absoluteString, forKey: baseURLKey)
-        try keychain.write(trimmedKey)
         return MessagingServerSession(baseURL: baseURL, apiKey: trimmedKey)
+    }
+
+    func persist(_ session: MessagingServerSession) throws {
+        defaults.set(session.baseURL.absoluteString, forKey: baseURLKey)
+        try keychain.write(session.apiKey)
+    }
+
+    @discardableResult
+    func save(baseURLString: String, apiKey: String) throws -> MessagingServerSession {
+        let session = try makeDraftSession(baseURLString: baseURLString, apiKey: apiKey)
+        try persist(session)
+        return session
     }
 
     func clear() {

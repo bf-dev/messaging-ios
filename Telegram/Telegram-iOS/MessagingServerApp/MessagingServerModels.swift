@@ -172,6 +172,13 @@ struct MessagingServerPlatformStatus: Codable, Equatable {
         }
         return "Needs setup"
     }
+
+    var displayAccountName: String {
+        if !accountName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return accountName
+        }
+        return accountKey
+    }
 }
 
 struct MessagingServerCachedAsset: Codable, Equatable {
@@ -193,6 +200,16 @@ struct MessagingServerInboxParticipant: Codable, Equatable {
     let isSelf: Bool
     let profileAsset: MessagingServerCachedAsset?
     let meta: MessagingServerJSONObject
+
+    var displayName: String {
+        if let participantName, !participantName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return participantName
+        }
+        if let username, !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return username
+        }
+        return participantId
+    }
 }
 
 struct MessagingServerInboxSummary: Codable, Equatable {
@@ -208,10 +225,36 @@ struct MessagingServerInboxSummary: Codable, Equatable {
     let avatarAsset: MessagingServerCachedAsset?
     let participants: [MessagingServerInboxParticipant]
 
+    var displayTitle: String {
+        if !inboxName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return inboxName
+        }
+        if let counterpart = participants.first(where: { !$0.isSelf }) {
+            return counterpart.displayName
+        }
+        return inboxId
+    }
+
+    var avatarTitle: String {
+        if let counterpart = participants.first(where: { !$0.isSelf }) {
+            return counterpart.displayName
+        }
+        return displayTitle
+    }
+
+    var lastPreviewText: String {
+        let preview = lastMessagePreview?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !preview.isEmpty {
+            return preview
+        }
+        return "No messages yet"
+    }
+
     var subtitleText: String {
         var parts: [String] = [platform.displayName, accountKey]
-        if let lastMessagePreview, !lastMessagePreview.isEmpty {
-            parts.append(lastMessagePreview)
+        let preview = lastMessagePreview?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !preview.isEmpty {
+            parts.append(preview)
         }
         return parts.joined(separator: " · ")
     }
@@ -287,12 +330,23 @@ struct MessagingServerMessage: Codable, Equatable {
         case system
     }
 
+    var senderDisplayName: String {
+        if let senderName, !senderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return senderName
+        }
+        if let senderId, !senderId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return senderId
+        }
+        return direction == .system ? "System" : "Unknown"
+    }
+
     var displayText: String {
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return text
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedText.isEmpty {
+            return trimmedText
         }
         if let firstAttachment = attachments.first {
-            return "Attachment: \(firstAttachment.displayName)"
+            return firstAttachment.kind == .image ? "Photo" : "Attachment: \(firstAttachment.displayName)"
         }
         if let firstSticker = stickers.first {
             return firstSticker.label ?? "Sticker"
@@ -305,6 +359,29 @@ struct MessagingServerMessage: Codable, Equatable {
             return nil
         }
         return attachments.map(\.displayName).joined(separator: "\n")
+    }
+
+    var previewAssets: [MessagingServerCachedAsset] {
+        attachments.compactMap(\.asset) + stickers.compactMap(\.asset)
+    }
+
+    var reactionsSummary: String? {
+        guard !reactions.isEmpty else {
+            return nil
+        }
+        var counts: [String: Int] = [:]
+        var order: [String] = []
+        for reaction in reactions {
+            if counts[reaction.emoji] == nil {
+                order.append(reaction.emoji)
+            }
+            counts[reaction.emoji, default: 0] += 1
+        }
+        let tokens = order.map { emoji in
+            let count = counts[emoji] ?? 0
+            return count > 1 ? "\(emoji) \(count)" : emoji
+        }
+        return tokens.joined(separator: "  ")
     }
 }
 
@@ -335,6 +412,7 @@ struct MessagingServerOperationView: Codable, Equatable {
     let uploadAssetIds: [String]
     let uploadAssets: [MessagingServerCachedAsset]
     let replacementOperationId: String?
+    let localAttachmentNames: [String]? = nil
 
     var isPendingBubble: Bool {
         guard operationType == .sendMessage else {
@@ -348,14 +426,21 @@ struct MessagingServerOperationView: Codable, Equatable {
         }
     }
 
+    var isLocalOnly: Bool {
+        approvalId == nil && operationId.hasPrefix("local:")
+    }
+
     var suggestedEditText: String {
-        if let payloadText = payload["text"]?.stringValue, !payloadText.isEmpty {
+        if let payloadText = payload["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !payloadText.isEmpty {
             return payloadText
         }
         return preview
     }
 
     var attachmentSummary: String? {
+        if let localAttachmentNames, !localAttachmentNames.isEmpty {
+            return localAttachmentNames.joined(separator: "\n")
+        }
         guard !uploadAssets.isEmpty else {
             return nil
         }
@@ -367,10 +452,14 @@ struct MessagingServerOperationView: Codable, Equatable {
         }.joined(separator: "\n")
     }
 
+    var previewAssets: [MessagingServerCachedAsset] {
+        uploadAssets
+    }
+
     var statusSummary: String {
         switch localStatus {
         case .approvalRequested:
-            return "Awaiting approval"
+            return approvalStatus == .pending ? "Awaiting approval" : "Queued"
         case .approved:
             return "Approved"
         case .denied:
@@ -482,6 +571,31 @@ enum MessagingServerDate {
         return formatter
     }()
 
+    private static let listTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter
+    }()
+
+    private static let listWeekdayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE"
+        return formatter
+    }()
+
+    private static let listDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
+    private static let chatTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter
+    }()
+
     static func parse(_ value: String?) -> Date? {
         guard let value, !value.isEmpty else {
             return nil
@@ -496,13 +610,38 @@ enum MessagingServerDate {
         return shortFormatter.string(from: date)
     }
 
+    static func listTimestamp(_ value: String?) -> String {
+        guard let date = parse(value) else {
+            return ""
+        }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return listTimeFormatter.string(from: date)
+        }
+        if calendar.isDate(date, equalTo: Date(), toGranularity: .weekOfYear) {
+            return listWeekdayFormatter.string(from: date)
+        }
+        return listDateFormatter.string(from: date)
+    }
+
+    static func conversationTimestamp(_ value: String?) -> String {
+        guard let date = parse(value) else {
+            return ""
+        }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return chatTimeFormatter.string(from: date)
+        }
+        return shortFormatter.string(from: date)
+    }
+
     static func nowString() -> String {
-        return iso8601WithFractional.string(from: Date())
+        iso8601WithFractional.string(from: Date())
     }
 }
 
 extension Array where Element == MessagingServerPlatformStatus {
     func accountName(for accountKey: String) -> String? {
-        return first(where: { $0.accountKey == accountKey })?.accountName
+        first(where: { $0.accountKey == accountKey })?.displayAccountName
     }
 }

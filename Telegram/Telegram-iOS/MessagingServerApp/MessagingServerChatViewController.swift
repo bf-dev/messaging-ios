@@ -25,11 +25,22 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         }
     }
 
+    private struct UploadedAssetBatch {
+        let assetIds: [String]
+        let assets: [MessagingServerCachedAsset]
+    }
+
     private let session: MessagingServerSession
     private let client: MessagingServerAPIClient
     private let inbox: MessagingServerInboxSummary
 
+    private let titleStack = UIStackView()
+    private let titleTextLabel = UILabel()
+    private let subtitleTextLabel = UILabel()
+
     private let tableView = UITableView(frame: .zero, style: .plain)
+    private let refreshControl = UIRefreshControl()
+
     private let composerContainer = UIStackView()
     private let attachmentScrollView = UIScrollView()
     private let attachmentStack = UIStackView()
@@ -41,7 +52,9 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     private let placeholderLabel = UILabel()
     private let sendButton = UIButton(type: .system)
     private let composerSpinner = UIActivityIndicatorView(style: .medium)
+
     private var composerBottomConstraint: NSLayoutConstraint?
+    private var textViewHeightConstraint: NSLayoutConstraint?
 
     private var messages: [MessagingServerMessage] = []
     private var serverOperations: [MessagingServerOperationView] = []
@@ -51,6 +64,8 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     private var selectedAttachments: [MessagingServerUploadDraft] = []
     private var realtimeClient: MessagingServerRealtimeClient?
     private var scheduledRefresh: DispatchWorkItem?
+    private var connectionState: MessagingServerRealtimeState = .disconnected
+    private var lastMarkedReadMessageId: String?
     private var isSending = false
     private var hasWarnedAboutOperations = false
     private var hasWarnedAboutSuggestedReplies = false
@@ -74,17 +89,15 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
-        title = inbox.inboxName.isEmpty ? inbox.inboxId : inbox.inboxName
         navigationItem.largeTitleDisplayMode = .never
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Status", style: .plain, target: self, action: #selector(statusPressed))
-
+        configureTitleView()
         configureTableView()
         configureComposer()
         configureKeyboardHandling()
         updateAttachmentPills()
         updateSuggestedReplyPills()
-        updatePlaceholderVisibility()
-
+        updateComposerState()
+        updateNavigationSubtitle()
         loadConversation(showSpinner: true)
     }
 
@@ -93,9 +106,54 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         startRealtime()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        markVisibleMessagesReadIfNeeded()
+    }
+
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         realtimeClient?.disconnect()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateTextViewHeight()
+    }
+
+    private func configureTitleView() {
+        titleStack.axis = .vertical
+        titleStack.alignment = .center
+        titleStack.spacing = 1.0
+
+        titleTextLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
+        titleTextLabel.text = inbox.displayTitle
+        titleTextLabel.textAlignment = .center
+
+        subtitleTextLabel.font = UIFont.systemFont(ofSize: 12.0)
+        subtitleTextLabel.textColor = .secondaryLabel
+        subtitleTextLabel.textAlignment = .center
+
+        titleStack.addArrangedSubview(titleTextLabel)
+        titleStack.addArrangedSubview(subtitleTextLabel)
+        navigationItem.titleView = titleStack
+        navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), style: .plain, target: self, action: #selector(showConversationInfo))
+    }
+
+    private func updateNavigationSubtitle() {
+        let accountName = inbox.accountKey
+        let stateText: String
+        switch connectionState {
+        case .connected:
+            stateText = "Live"
+        case .connecting:
+            stateText = "Connecting"
+        case .reconnecting:
+            stateText = "Reconnecting"
+        case .disconnected:
+            stateText = "Offline"
+        }
+        subtitleTextLabel.text = "\(inbox.platform.displayName) · \(accountName) · \(stateText)"
     }
 
     private func configureTableView() {
@@ -107,7 +165,11 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         tableView.backgroundColor = .systemGroupedBackground
         tableView.keyboardDismissMode = .interactive
         tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 80.0
+        tableView.estimatedRowHeight = 96.0
+
+        refreshControl.addTarget(self, action: #selector(refreshConversation), for: .valueChanged)
+        tableView.refreshControl = refreshControl
+
         view.addSubview(tableView)
     }
 
@@ -118,31 +180,36 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         composerContainer.layoutMargins = UIEdgeInsets(top: 10.0, left: 12.0, bottom: 10.0, right: 12.0)
         composerContainer.isLayoutMarginsRelativeArrangement = true
         composerContainer.backgroundColor = .secondarySystemBackground
+        composerContainer.layer.borderWidth = 1.0 / UIScreen.main.scale
+        composerContainer.layer.borderColor = UIColor.separator.cgColor
 
         configureHorizontalScroll(attachmentScrollView, stackView: attachmentStack)
         configureHorizontalScroll(suggestedScrollView, stackView: suggestedStack)
-        attachmentScrollView.isHidden = true
-        suggestedScrollView.isHidden = false
 
         composerRow.axis = .horizontal
-        composerRow.alignment = .center
+        composerRow.alignment = .bottom
         composerRow.spacing = 10.0
 
-        attachButton.setImage(UIImage(systemName: "paperclip.circle.fill"), for: .normal)
+        let attachImage = UIImage(systemName: "paperclip.circle.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 28.0, weight: .regular))
+        attachButton.setImage(attachImage, for: .normal)
         attachButton.tintColor = view.tintColor
         attachButton.addTarget(self, action: #selector(attachPressed(_:)), for: .touchUpInside)
 
         textView.delegate = self
         textView.font = UIFont.systemFont(ofSize: 16.0)
         textView.layer.cornerRadius = 18.0
+        textView.layer.cornerCurve = .continuous
         textView.layer.borderWidth = 1.0
         textView.layer.borderColor = UIColor.separator.cgColor
         textView.backgroundColor = .systemBackground
         textView.isScrollEnabled = false
-        textView.textContainerInset = UIEdgeInsets(top: 9.0, left: 10.0, bottom: 9.0, right: 10.0)
+        textView.textContainerInset = UIEdgeInsets(top: 10.0, left: 11.0, bottom: 10.0, right: 11.0)
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textViewHeightConstraint = textView.heightAnchor.constraint(equalToConstant: 40.0)
+        textViewHeightConstraint?.isActive = true
+        textView.widthAnchor.constraint(greaterThanOrEqualToConstant: 120.0).isActive = true
 
         placeholderLabel.text = "Message"
         placeholderLabel.textColor = .placeholderText
@@ -151,10 +218,11 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         textView.addSubview(placeholderLabel)
         NSLayoutConstraint.activate([
             placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: 16.0),
-            placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 9.0),
+            placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 10.0),
         ])
 
-        sendButton.setImage(UIImage(systemName: "arrow.up.circle.fill"), for: .normal)
+        let sendImage = UIImage(systemName: "arrow.up.circle.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 30.0, weight: .regular))
+        sendButton.setImage(sendImage, for: .normal)
         sendButton.tintColor = view.tintColor
         sendButton.addTarget(self, action: #selector(sendPressed), for: .touchUpInside)
 
@@ -166,8 +234,6 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         composerRow.addArrangedSubview(textView)
         composerRow.addArrangedSubview(sendButton)
         composerRow.addArrangedSubview(composerSpinner)
-        textView.heightAnchor.constraint(greaterThanOrEqualToConstant: 40.0).isActive = true
-        textView.widthAnchor.constraint(greaterThanOrEqualToConstant: 120.0).isActive = true
 
         composerContainer.addArrangedSubview(attachmentScrollView)
         composerContainer.addArrangedSubview(suggestedScrollView)
@@ -233,17 +299,24 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
 
     @objc private func keyboardWillHide(_ notification: Notification) {
         composerBottomConstraint?.constant = 0.0
-        view.layoutIfNeeded()
+        UIView.animate(withDuration: 0.2) {
+            self.view.layoutIfNeeded()
+        }
+    }
+
+    @objc private func refreshConversation() {
+        loadConversation(showSpinner: false)
     }
 
     private func startRealtime() {
         realtimeClient?.disconnect()
         let realtimeClient = MessagingServerRealtimeClient(session: session)
+        realtimeClient.onStateChange = { [weak self] state in
+            self?.connectionState = state
+            self?.updateNavigationSubtitle()
+        }
         realtimeClient.onEvent = { [weak self] event in
-            guard let self else {
-                return
-            }
-            guard event.topic == "inbox:\(self.inbox.inboxId)" else {
+            guard let self, event.topic == "inbox:\(self.inbox.inboxId)" else {
                 return
             }
             self.scheduleConversationRefresh()
@@ -265,6 +338,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     }
 
     private func loadConversation(showSpinner: Bool) {
+        let shouldScrollToBottom = showSpinner || isNearBottom()
         if showSpinner {
             composerSpinner.startAnimating()
         }
@@ -296,6 +370,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             guard let self else {
                 return
             }
+            self.refreshControl.endRefreshing()
             if showSpinner {
                 self.composerSpinner.stopAnimating()
             }
@@ -345,7 +420,8 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
                 break
             }
 
-            self.rebuildRows(scrollToBottom: true)
+            self.rebuildRows(scrollToBottom: shouldScrollToBottom)
+            self.markVisibleMessagesReadIfNeeded()
         }
     }
 
@@ -356,6 +432,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
                 pendingById[operation.operationId] = operation
             }
         }
+
         let visibleOperations = Array(pendingById.values).filter { $0.isPendingBubble }
         rows = messages.map(Row.message) + visibleOperations.map(Row.pending)
         rows.sort { lhs, rhs in
@@ -364,10 +441,13 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             }
             return lhs.sortDate < rhs.sortDate
         }
+
         tableView.reloadData()
         updateAttachmentPills()
         updateSuggestedReplyPills()
-        updatePlaceholderVisibility()
+        updateComposerState()
+        updateNavigationSubtitle()
+
         if scrollToBottom {
             self.scrollToBottom(animated: false)
         }
@@ -391,7 +471,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             attachmentStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        attachmentScrollView.isHidden = selectedAttachments.isEmpty
+
         for attachment in selectedAttachments {
             let button = MessagingServerPillButton(frame: .zero)
             button.rawValue = attachment.id.uuidString
@@ -400,6 +480,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             button.addTarget(self, action: #selector(removeAttachmentPressed(_:)), for: .touchUpInside)
             attachmentStack.addArrangedSubview(button)
         }
+        attachmentScrollView.isHidden = selectedAttachments.isEmpty
     }
 
     private func updateSuggestedReplyPills() {
@@ -425,24 +506,41 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         suggestedScrollView.isHidden = false
     }
 
-    private func updatePlaceholderVisibility() {
+    private func updateComposerState() {
         placeholderLabel.isHidden = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasContent = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !selectedAttachments.isEmpty
+        sendButton.isEnabled = hasContent && !isSending
+        sendButton.alpha = sendButton.isEnabled ? 1.0 : 0.45
+        attachButton.isEnabled = !isSending
+        textView.isEditable = !isSending
     }
 
-    @objc private func statusPressed() {
-        let pendingCount = serverOperations.filter { $0.isPendingBubble }.count + optimisticOperations.filter { $0.isPendingBubble }.count
-        let backgroundActionCount = serverOperations.filter { !$0.isPendingBubble }.count
+    private func updateTextViewHeight() {
+        let targetWidth = max(textView.bounds.width, view.bounds.width - 140.0)
+        let fittingSize = CGSize(width: targetWidth, height: CGFloat.greatestFiniteMagnitude)
+        let height = min(max(textView.sizeThatFits(fittingSize).height, 40.0), 120.0)
+        textViewHeightConstraint?.constant = height
+    }
+
+    @objc private func showConversationInfo() {
+        let pendingCount = rows.compactMap { row -> MessagingServerOperationView? in
+            if case let .pending(operation) = row {
+                return operation
+            }
+            return nil
+        }.count
+
         let message = [
             "Inbox ID: \(inbox.inboxId)",
             "Platform: \(inbox.platform.displayName)",
             "Account: \(inbox.accountKey)",
             "Messages loaded: \(messages.count)",
             "Pending outgoing bubbles: \(pendingCount)",
-            "Other pending actions: \(backgroundActionCount)",
             "Suggested replies: \(suggestedReplies.count)",
             "Server: \(session.displayBaseURL)",
         ].joined(separator: "\n")
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+
+        let alert = UIAlertController(title: inbox.displayTitle, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
     }
@@ -483,67 +581,201 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     }
 
     @objc private func sendPressed() {
-        let trimmedText = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty || !selectedAttachments.isEmpty else {
+        guard !isSending else {
             return
         }
+
+        let trimmedText = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let attachments = selectedAttachments
+        guard !trimmedText.isEmpty || !attachments.isEmpty else {
+            return
+        }
+
+        let requestedAt = MessagingServerDate.nowString()
+        let tempOperationId = "local:\(UUID().uuidString)"
+        let attachmentNames = attachments.map(\.filename)
+        let localPending = localSendOperation(
+            operationId: tempOperationId,
+            approvalId: nil,
+            text: trimmedText,
+            requestedAt: requestedAt,
+            localStatus: .approvalRequested,
+            approvalStatus: .pending,
+            executionStatus: .pending,
+            error: nil,
+            uploadAssetIds: [],
+            uploadAssets: [],
+            localAttachmentNames: attachmentNames
+        )
+        upsertOptimisticOperation(localPending)
+        clearComposerDraft()
+        rebuildRows(scrollToBottom: true)
         setSending(true)
-        uploadAttachments(selectedAttachments, collectedAssetIds: []) { [weak self] result in
+
+        uploadAttachments(attachments) { [weak self] result in
             guard let self else {
                 return
             }
             switch result {
-            case let .success(assetIds):
+            case let .success(batch):
+                let uploadedLocal = self.localSendOperation(
+                    operationId: tempOperationId,
+                    approvalId: nil,
+                    text: trimmedText,
+                    requestedAt: requestedAt,
+                    localStatus: .approvalRequested,
+                    approvalStatus: .pending,
+                    executionStatus: .pending,
+                    error: nil,
+                    uploadAssetIds: batch.assetIds,
+                    uploadAssets: batch.assets,
+                    localAttachmentNames: attachmentNames
+                )
+                self.upsertOptimisticOperation(uploadedLocal)
+                self.rebuildRows(scrollToBottom: true)
+
                 let requestBody = MessagingServerSendMessageRequest(
                     text: trimmedText.isEmpty ? nil : trimmedText,
                     media: [],
-                    uploadIds: assetIds.isEmpty ? nil : assetIds,
+                    uploadIds: batch.assetIds.isEmpty ? nil : batch.assetIds,
                     replyToMessageId: nil
                 )
                 self.client.sendMessage(inboxId: self.inbox.inboxId, requestBody: requestBody) { sendResult in
                     self.setSending(false)
                     switch sendResult {
                     case let .success(approval):
-                        self.handleSendSuccess(approval: approval, text: trimmedText, uploadAssetIds: assetIds)
+                        self.handleSendSuccess(
+                            approval: approval,
+                            text: trimmedText,
+                            requestedAt: requestedAt,
+                            tempOperationId: tempOperationId,
+                            assetIds: batch.assetIds,
+                            uploadAssets: batch.assets,
+                            localAttachmentNames: attachmentNames
+                        )
                     case let .failure(error):
+                        let failedOperation = self.localSendOperation(
+                            operationId: tempOperationId,
+                            approvalId: nil,
+                            text: trimmedText,
+                            requestedAt: requestedAt,
+                            localStatus: .failed,
+                            approvalStatus: nil,
+                            executionStatus: .failed,
+                            error: error.localizedDescription,
+                            uploadAssetIds: batch.assetIds,
+                            uploadAssets: batch.assets,
+                            localAttachmentNames: attachmentNames
+                        )
+                        self.upsertOptimisticOperation(failedOperation)
+                        self.rebuildRows(scrollToBottom: true)
                         self.presentMessagingServerError(error, title: "Send Failed")
                     }
                 }
             case let .failure(error):
                 self.setSending(false)
+                let failedOperation = self.localSendOperation(
+                    operationId: tempOperationId,
+                    approvalId: nil,
+                    text: trimmedText,
+                    requestedAt: requestedAt,
+                    localStatus: .failed,
+                    approvalStatus: nil,
+                    executionStatus: .failed,
+                    error: error.localizedDescription,
+                    uploadAssetIds: [],
+                    uploadAssets: [],
+                    localAttachmentNames: attachmentNames
+                )
+                self.upsertOptimisticOperation(failedOperation)
+                self.rebuildRows(scrollToBottom: true)
                 self.presentMessagingServerError(error, title: "Upload Failed")
             }
         }
     }
 
-    private func handleSendSuccess(approval: MessagingServerApprovalResult, text: String, uploadAssetIds: [String]) {
-        let fallbackPreview = !text.isEmpty ? text : (selectedAttachments.first?.filename ?? "Attachment")
-        let fallbackOperation = MessagingServerOperationView(
-            operationId: approval.operationId,
-            approvalId: approval.approvalId,
-            operationType: approval.operationType,
+    private func localSendOperation(
+        operationId: String,
+        approvalId: String?,
+        text: String,
+        requestedAt: String,
+        localStatus: MessagingServerOperationStatus,
+        approvalStatus: MessagingServerApprovalStatus?,
+        executionStatus: MessagingServerApprovalExecutionStatus?,
+        error: String?,
+        uploadAssetIds: [String],
+        uploadAssets: [MessagingServerCachedAsset],
+        localAttachmentNames: [String]
+    ) -> MessagingServerOperationView {
+        let preview: String
+        if !text.isEmpty {
+            preview = text
+        } else if let firstAttachmentName = localAttachmentNames.first {
+            preview = firstAttachmentName
+        } else {
+            preview = "Attachment"
+        }
+
+        return MessagingServerOperationView(
+            operationId: operationId,
+            approvalId: approvalId,
+            operationType: .sendMessage,
             platform: inbox.platform,
             accountKey: inbox.accountKey,
             inboxId: inbox.inboxId,
             messageId: nil,
-            preview: fallbackPreview,
+            preview: preview,
             payload: text.isEmpty ? [:] : ["text": .string(text)],
-            requestedAt: MessagingServerDate.nowString(),
+            requestedAt: requestedAt,
             executedAt: nil,
+            localStatus: localStatus,
+            approvalStatus: approvalStatus,
+            executionStatus: executionStatus,
+            error: error,
+            platformMessageIds: [],
+            uploadAssetIds: uploadAssetIds,
+            uploadAssets: uploadAssets,
+            replacementOperationId: nil,
+            localAttachmentNames: localAttachmentNames
+        )
+    }
+
+    private func clearComposerDraft() {
+        textView.text = ""
+        selectedAttachments.removeAll()
+        updateTextViewHeight()
+        updateAttachmentPills()
+        updateComposerState()
+    }
+
+    private func handleSendSuccess(
+        approval: MessagingServerApprovalResult,
+        text: String,
+        requestedAt: String,
+        tempOperationId: String,
+        assetIds: [String],
+        uploadAssets: [MessagingServerCachedAsset],
+        localAttachmentNames: [String]
+    ) {
+        removeOperation(operationId: tempOperationId)
+
+        let fallbackOperation = localSendOperation(
+            operationId: approval.operationId,
+            approvalId: approval.approvalId,
+            text: text,
+            requestedAt: requestedAt,
             localStatus: .approvalRequested,
             approvalStatus: .pending,
             executionStatus: .pending,
             error: nil,
-            platformMessageIds: [],
-            uploadAssetIds: uploadAssetIds,
-            uploadAssets: [],
-            replacementOperationId: nil
+            uploadAssetIds: assetIds,
+            uploadAssets: uploadAssets,
+            localAttachmentNames: localAttachmentNames
         )
         upsertOptimisticOperation(fallbackOperation)
-        textView.text = ""
-        selectedAttachments.removeAll()
         rebuildRows(scrollToBottom: true)
         showMessagingServerToast("Message queued for approval.")
+
         client.getOperation(operationId: approval.operationId) { [weak self] result in
             guard let self else {
                 return
@@ -558,36 +790,39 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
 
     private func setSending(_ sending: Bool) {
         isSending = sending
-        attachButton.isEnabled = !sending
-        sendButton.isEnabled = !sending
-        textView.isEditable = !sending
         if sending {
             composerSpinner.startAnimating()
         } else {
             composerSpinner.stopAnimating()
         }
+        updateComposerState()
     }
 
     private func uploadAttachments(
         _ attachments: [MessagingServerUploadDraft],
-        collectedAssetIds: [String],
-        completion: @escaping (Result<[String], Error>) -> Void
+        collectedIds: [String] = [],
+        collectedAssets: [MessagingServerCachedAsset] = [],
+        completion: @escaping (Result<UploadedAssetBatch, Error>) -> Void
     ) {
         guard let first = attachments.first else {
-            completion(.success(collectedAssetIds))
+            completion(.success(UploadedAssetBatch(assetIds: collectedIds, assets: collectedAssets)))
             return
         }
+
         client.uploadAttachment(first) { [weak self] result in
             guard self != nil else {
                 return
             }
             switch result {
             case let .success(asset):
-                var nextCollected = collectedAssetIds
-                nextCollected.append(asset.assetId)
                 var remaining = attachments
                 remaining.removeFirst()
-                self?.uploadAttachments(remaining, collectedAssetIds: nextCollected, completion: completion)
+                self?.uploadAttachments(
+                    remaining,
+                    collectedIds: collectedIds + [asset.assetId],
+                    collectedAssets: collectedAssets + [asset],
+                    completion: completion
+                )
             case let .failure(error):
                 completion(.failure(error))
             }
@@ -600,6 +835,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         }
         selectedAttachments.removeAll { $0.id == identifier }
         updateAttachmentPills()
+        updateComposerState()
     }
 
     @objc private func suggestedReplyPressed(_ sender: MessagingServerPillButton) {
@@ -607,12 +843,13 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             return
         }
         textView.text = reply.text
-        updatePlaceholderVisibility()
+        updateTextViewHeight()
+        updateComposerState()
         textView.becomeFirstResponder()
     }
 
     @objc private func addSuggestedReplyPressed() {
-        let alert = UIAlertController(title: "New Suggested Reply", message: "Create a reusable reply chip for this inbox.", preferredStyle: .alert)
+        let alert = UIAlertController(title: "New Suggested Reply", message: "Create a reusable reply chip for this chat.", preferredStyle: .alert)
         alert.addTextField { textField in
             textField.placeholder = "Reply text"
         }
@@ -642,11 +879,26 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     }
 
     func textViewDidChange(_ textView: UITextView) {
-        updatePlaceholderVisibility()
+        updateTextViewHeight()
+        updateComposerState()
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else {
+            return
+        }
+        markVisibleMessagesReadIfNeeded()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === tableView, !decelerate else {
+            return
+        }
+        markVisibleMessagesReadIfNeeded()
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return max(rows.count, 1)
+        max(rows.count, 1)
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -654,7 +906,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             let cell = UITableViewCell(style: .subtitle, reuseIdentifier: "Empty")
             cell.selectionStyle = .none
             cell.textLabel?.text = "No messages yet"
-            cell.detailTextLabel?.text = "Send a message or create a suggested reply to get started."
+            cell.detailTextLabel?.text = "Send a message or pin a suggested reply to get started."
             cell.detailTextLabel?.numberOfLines = 0
             return cell
         }
@@ -663,44 +915,24 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             return UITableViewCell()
         }
 
-        let row = rows[indexPath.row]
-        switch row {
+        switch rows[indexPath.row] {
         case let .message(message):
-            let footerComponents = [
-                MessagingServerDate.short(message.sentAt),
-                message.editedAt != nil ? "Edited" : nil,
-            ].compactMap { $0 }.filter { !$0.isEmpty }
-            let title: String?
-            switch message.direction {
-            case .incoming:
-                title = message.senderName
-            case .outgoing, .system:
-                title = nil
-            }
-            let configuration = MessagingServerBubbleConfiguration(
-                title: title,
-                body: message.displayText,
-                attachments: message.attachmentSummary,
-                footer: footerComponents.joined(separator: " · "),
-                isOutgoing: message.direction == .outgoing,
-                isPending: false,
-                isFailed: false
-            )
-            cell.configure(configuration)
+            cell.configure(bubbleConfiguration(for: message), session: session)
         case let .pending(operation):
-            let footer = [operation.statusSummary, MessagingServerDate.short(operation.requestedAt)].filter { !$0.isEmpty }.joined(separator: " · ")
-            let configuration = MessagingServerBubbleConfiguration(
-                title: operation.approvalStatus == .pending ? "Pending approval" : "Pending message",
-                body: operation.preview,
-                attachments: operation.attachmentSummary,
-                footer: footer,
-                isOutgoing: true,
-                isPending: true,
-                isFailed: operation.localStatus == .failed
-            )
-            cell.configure(configuration)
+            cell.configure(bubbleConfiguration(for: operation), session: session)
         }
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard rows.indices.contains(indexPath.row) else {
+            return
+        }
+        if case let .pending(operation) = rows[indexPath.row] {
+            let sourceCell = tableView.cellForRow(at: indexPath)
+            presentPendingActionSheet(for: operation, sourceView: sourceCell)
+        }
     }
 
     func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
@@ -710,49 +942,183 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         switch rows[indexPath.row] {
         case let .pending(operation):
             return UIContextMenuConfiguration(identifier: operation.operationId as NSString, previewProvider: nil) { [weak self] _ in
-                guard let self else {
-                    return nil
-                }
-                let edit = UIAction(title: "Edit", image: UIImage(systemName: "pencil")) { _ in
-                    self.presentEditOperationPrompt(operation)
-                }
-                let approve = UIAction(title: "Approve", image: UIImage(systemName: "checkmark.circle")) { _ in
-                    self.approveOperation(operation)
-                }
-                let deny = UIAction(title: "Deny", image: UIImage(systemName: "xmark.circle"), attributes: .destructive) { _ in
-                    self.denyOperation(operation)
-                }
-                let details = UIAction(title: "Details", image: UIImage(systemName: "info.circle")) { _ in
-                    self.showOperationDetails(operation)
-                }
-                return UIMenu(title: "Pending Message", children: [edit, approve, deny, details])
+                self?.pendingMenu(for: operation)
             }
         case let .message(message):
             return UIContextMenuConfiguration(identifier: message.messageId as NSString, previewProvider: nil) { [weak self] _ in
-                guard let self else {
-                    return nil
-                }
-                let edit = UIAction(title: "Edit Message", image: UIImage(systemName: "square.and.pencil")) { _ in
-                    self.presentMessageEditPrompt(message)
-                }
-                let react = UIMenu(title: "React", children: [
-                    UIAction(title: "👍") { _ in self.submitReaction(for: message, emoji: "👍", remove: false) },
-                    UIAction(title: "❤️") { _ in self.submitReaction(for: message, emoji: "❤️", remove: false) },
-                    UIAction(title: "Custom…") { _ in self.presentReactionPrompt(for: message, remove: false) },
-                ])
-                let removeReaction = UIAction(title: "Remove Reaction…", image: UIImage(systemName: "minus.circle")) { _ in
-                    self.presentReactionPrompt(for: message, remove: true)
-                }
-                let delete = UIAction(title: "Delete Message", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
-                    self.presentDeleteConfirmation(for: message)
-                }
-                return UIMenu(title: "Message", children: [edit, react, removeReaction, delete])
+                self?.messageMenu(for: message)
             }
         }
     }
 
+    private func bubbleConfiguration(for message: MessagingServerMessage) -> MessagingServerBubbleConfiguration {
+        let title: String?
+        switch message.direction {
+        case .incoming:
+            title = message.senderDisplayName
+        case .system:
+            title = "System"
+        case .outgoing:
+            title = nil
+        }
+
+        let footer = MessagingServerDate.conversationTimestamp(message.sentAt)
+        let attachmentSummary: String?
+        if message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !message.previewAssets.isEmpty {
+            attachmentSummary = nil
+        } else {
+            attachmentSummary = message.attachmentSummary
+        }
+
+        return MessagingServerBubbleConfiguration(
+            title: title,
+            replyText: replyText(for: message),
+            body: message.displayText,
+            attachments: attachmentSummary,
+            footer: footer,
+            status: message.editedAt != nil ? "Edited" : nil,
+            reactions: message.reactionsSummary,
+            previewAssets: message.previewAssets,
+            isOutgoing: message.direction == .outgoing,
+            isPending: false,
+            isFailed: false,
+            avatarAsset: message.senderProfileAsset,
+            avatarTitle: message.senderDisplayName
+        )
+    }
+
+    private func bubbleConfiguration(for operation: MessagingServerOperationView) -> MessagingServerBubbleConfiguration {
+        MessagingServerBubbleConfiguration(
+            title: nil,
+            replyText: nil,
+            body: operation.suggestedEditText,
+            attachments: operation.attachmentSummary,
+            footer: MessagingServerDate.conversationTimestamp(operation.requestedAt),
+            status: operation.statusSummary,
+            reactions: nil,
+            previewAssets: operation.previewAssets,
+            isOutgoing: true,
+            isPending: operation.localStatus != .failed,
+            isFailed: operation.localStatus == .failed,
+            avatarAsset: nil,
+            avatarTitle: "You"
+        )
+    }
+
+    private func replyText(for message: MessagingServerMessage) -> String? {
+        guard let replyId = message.replyToMessageId, let repliedMessage = messages.first(where: { $0.messageId == replyId }) else {
+            return nil
+        }
+        let prefix = repliedMessage.direction == .outgoing ? "You" : repliedMessage.senderDisplayName
+        let summary = repliedMessage.displayText.replacingOccurrences(of: "\n", with: " ")
+        return "\(prefix): \(String(summary.prefix(90)))"
+    }
+
+    private func pendingMenu(for operation: MessagingServerOperationView) -> UIMenu {
+        var actions: [UIMenuElement] = []
+
+        if !operation.isLocalOnly {
+            actions.append(UIAction(title: "Edit", image: UIImage(systemName: "pencil")) { [weak self] _ in
+                self?.presentEditOperationPrompt(operation)
+            })
+            if operation.approvalStatus == .pending || operation.localStatus == .approvalRequested {
+                actions.append(UIAction(title: "Approve", image: UIImage(systemName: "checkmark.circle")) { [weak self] _ in
+                    self?.approveOperation(operation)
+                })
+                actions.append(UIAction(title: "Deny", image: UIImage(systemName: "xmark.circle"), attributes: .destructive) { [weak self] _ in
+                    self?.denyOperation(operation)
+                })
+            }
+            if operation.localStatus == .approved || operation.localStatus == .executing {
+                actions.append(UIAction(title: "Cancel", image: UIImage(systemName: "slash.circle")) { [weak self] _ in
+                    self?.cancelOperation(operation)
+                })
+            }
+        }
+
+        actions.append(UIAction(title: "Details", image: UIImage(systemName: "info.circle")) { [weak self] _ in
+            self?.showOperationDetails(operation)
+        })
+
+        if operation.isLocalOnly {
+            actions.append(UIAction(title: "Dismiss Bubble", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
+                self?.removeOperation(operationId: operation.operationId)
+                self?.rebuildRows(scrollToBottom: false)
+            })
+        }
+
+        return UIMenu(title: "Pending Message", children: actions)
+    }
+
+    private func messageMenu(for message: MessagingServerMessage) -> UIMenu {
+        let reactMenu = UIMenu(title: "React", children: [
+            UIAction(title: "👍") { [weak self] _ in self?.submitReaction(for: message, emoji: "👍", remove: false) },
+            UIAction(title: "❤️") { [weak self] _ in self?.submitReaction(for: message, emoji: "❤️", remove: false) },
+            UIAction(title: "Custom…") { [weak self] _ in self?.presentReactionPrompt(for: message, remove: false) },
+        ])
+
+        var actions: [UIMenuElement] = [
+            reactMenu,
+            UIAction(title: "Remove Reaction…", image: UIImage(systemName: "minus.circle")) { [weak self] _ in
+                self?.presentReactionPrompt(for: message, remove: true)
+            },
+        ]
+
+        if message.direction == .outgoing {
+            actions.insert(UIAction(title: "Edit Message", image: UIImage(systemName: "square.and.pencil")) { [weak self] _ in
+                self?.presentMessageEditPrompt(message)
+            }, at: 0)
+            actions.append(UIAction(title: "Delete Message", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
+                self?.presentDeleteConfirmation(for: message)
+            })
+        }
+
+        return UIMenu(title: "Message", children: actions)
+    }
+
+    private func presentPendingActionSheet(for operation: MessagingServerOperationView, sourceView: UIView?) {
+        let alert = UIAlertController(title: "Pending Message", message: operation.statusSummary, preferredStyle: .actionSheet)
+
+        if !operation.isLocalOnly {
+            alert.addAction(UIAlertAction(title: "Edit", style: .default, handler: { [weak self] _ in
+                self?.presentEditOperationPrompt(operation)
+            }))
+            if operation.approvalStatus == .pending || operation.localStatus == .approvalRequested {
+                alert.addAction(UIAlertAction(title: "Approve", style: .default, handler: { [weak self] _ in
+                    self?.approveOperation(operation)
+                }))
+                alert.addAction(UIAlertAction(title: "Deny", style: .destructive, handler: { [weak self] _ in
+                    self?.denyOperation(operation)
+                }))
+            }
+            if operation.localStatus == .approved || operation.localStatus == .executing {
+                alert.addAction(UIAlertAction(title: "Cancel", style: .default, handler: { [weak self] _ in
+                    self?.cancelOperation(operation)
+                }))
+            }
+        }
+
+        alert.addAction(UIAlertAction(title: "Details", style: .default, handler: { [weak self] _ in
+            self?.showOperationDetails(operation)
+        }))
+
+        if operation.isLocalOnly {
+            alert.addAction(UIAlertAction(title: "Dismiss Bubble", style: .destructive, handler: { [weak self] _ in
+                self?.removeOperation(operationId: operation.operationId)
+                self?.rebuildRows(scrollToBottom: false)
+            }))
+        }
+
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = sourceView ?? view
+            popover.sourceRect = sourceView?.bounds ?? CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1.0, height: 1.0)
+        }
+        present(alert, animated: true)
+    }
+
     private func presentEditOperationPrompt(_ operation: MessagingServerOperationView) {
-        let alert = UIAlertController(title: "Edit Pending Message", message: "This uses the pending-operation replacement endpoint.", preferredStyle: .alert)
+        let alert = UIAlertController(title: "Edit Pending Message", message: "This updates the pending approval request.", preferredStyle: .alert)
         alert.addTextField { textField in
             textField.text = operation.suggestedEditText
             textField.placeholder = "Message text"
@@ -818,6 +1184,26 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
                 self.loadConversation(showSpinner: false)
             case let .failure(error):
                 self.presentMessagingServerError(error, title: "Deny Failed")
+            }
+        }
+    }
+
+    private func cancelOperation(_ operation: MessagingServerOperationView) {
+        client.cancelOperation(operationId: operation.operationId) { [weak self] result in
+            guard let self else {
+                return
+            }
+            switch result {
+            case let .success(updatedOperation):
+                self.removeOperation(operationId: operation.operationId)
+                if updatedOperation.isPendingBubble {
+                    self.upsertOptimisticOperation(updatedOperation)
+                }
+                self.rebuildRows(scrollToBottom: true)
+                self.showMessagingServerToast("Pending message cancelled.")
+                self.loadConversation(showSpinner: false)
+            case let .failure(error):
+                self.presentMessagingServerError(error, title: "Cancel Failed")
             }
         }
     }
@@ -928,15 +1314,53 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         }
     }
 
+    private func isNearBottom() -> Bool {
+        let offsetY = tableView.contentOffset.y
+        let visibleHeight = tableView.bounds.height - tableView.adjustedContentInset.top - tableView.adjustedContentInset.bottom
+        let threshold = max(80.0, tableView.contentSize.height - visibleHeight - 60.0)
+        return offsetY >= threshold
+    }
+
     private func scrollToBottom(animated: Bool) {
         guard !rows.isEmpty else {
             return
         }
         let indexPath = IndexPath(row: rows.count - 1, section: 0)
-        guard tableView.numberOfRows(inSection: 0) > indexPath.row else {
+        DispatchQueue.main.async {
+            guard self.tableView.numberOfRows(inSection: 0) > indexPath.row else {
+                return
+            }
+            self.tableView.scrollToRow(at: indexPath, at: .bottom, animated: animated)
+            self.markVisibleMessagesReadIfNeeded()
+        }
+    }
+
+    private func visibleMessageIdForReadState() -> String? {
+        let visibleRows = (tableView.indexPathsForVisibleRows ?? []).sorted()
+        for indexPath in visibleRows.reversed() {
+            guard rows.indices.contains(indexPath.row) else {
+                continue
+            }
+            if case let .message(message) = rows[indexPath.row] {
+                return message.messageId
+            }
+        }
+        return messages.last?.messageId
+    }
+
+    private func markVisibleMessagesReadIfNeeded() {
+        guard view.window != nil, let messageId = visibleMessageIdForReadState(), messageId != lastMarkedReadMessageId else {
             return
         }
-        tableView.scrollToRow(at: indexPath, at: .bottom, animated: animated)
+        lastMarkedReadMessageId = messageId
+        client.updateInboxReadState(inboxId: inbox.inboxId, lastReadMessageSeq: messageId) { [weak self] result in
+            guard let self else {
+                return
+            }
+            if case .failure = result, self.lastMarkedReadMessageId == messageId {
+                self.lastMarkedReadMessageId = nil
+            }
+        }
     }
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
@@ -951,6 +1375,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             let filename = sourceURL?.lastPathComponent ?? "photo-\(Int(Date().timeIntervalSince1970)).jpg"
             selectedAttachments.append(MessagingServerUploadDraft(filename: filename, mimeType: "image/jpeg", data: data))
             updateAttachmentPills()
+            updateComposerState()
             return
         }
 
@@ -959,6 +1384,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             let mimeType = mimeType(for: mediaURL)
             selectedAttachments.append(MessagingServerUploadDraft(filename: filename, mimeType: mimeType, data: data))
             updateAttachmentPills()
+            updateComposerState()
         }
     }
 
@@ -974,6 +1400,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             }
         }
         updateAttachmentPills()
+        updateComposerState()
     }
 
     private func mimeType(for url: URL) -> String {

@@ -4,6 +4,7 @@ final class MessagingServerSettingsViewController: UITableViewController {
     private let session: MessagingServerSession
     private let client: MessagingServerAPIClient
     private let sessionStore: MessagingServerSessionStore
+    private let onSessionUpdated: (MessagingServerSession) -> Void
     private let onLogout: () -> Void
 
     private var statuses: [MessagingServerPlatformStatus] = []
@@ -13,11 +14,13 @@ final class MessagingServerSettingsViewController: UITableViewController {
         session: MessagingServerSession,
         client: MessagingServerAPIClient,
         sessionStore: MessagingServerSessionStore,
+        onSessionUpdated: @escaping (MessagingServerSession) -> Void,
         onLogout: @escaping () -> Void
     ) {
         self.session = session
         self.client = client
         self.sessionStore = sessionStore
+        self.onSessionUpdated = onSessionUpdated
         self.onLogout = onLogout
         super.init(style: .insetGrouped)
     }
@@ -41,7 +44,7 @@ final class MessagingServerSettingsViewController: UITableViewController {
     }
 
     private func loadStatus(showSpinner: Bool) {
-        if isRefreshingStatus {
+        guard !isRefreshingStatus else {
             return
         }
         isRefreshingStatus = true
@@ -58,7 +61,7 @@ final class MessagingServerSettingsViewController: UITableViewController {
             case let .success(statuses):
                 self.statuses = statuses.sorted { lhs, rhs in
                     if lhs.platform.displayName == rhs.platform.displayName {
-                        return lhs.accountName < rhs.accountName
+                        return lhs.displayAccountName < rhs.displayAccountName
                     }
                     return lhs.platform.displayName < rhs.platform.displayName
                 }
@@ -70,24 +73,24 @@ final class MessagingServerSettingsViewController: UITableViewController {
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int {
-        return 3
+        3
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         switch section {
         case 0:
-            return 2
+            return 3
         case 1:
             return max(statuses.count, 1)
         default:
-            return 2
+            return 3
         }
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
         switch section {
         case 0:
-            return "Session"
+            return "Connection"
         case 1:
             return "Platform Status"
         default:
@@ -98,50 +101,64 @@ final class MessagingServerSettingsViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
         switch section {
         case 0:
-            return "Credentials are stored in the iOS keychain. WebSocket auth uses the same API key."
+            return "Credentials stay in the iOS keychain. Editing the connection validates first, then replaces the saved session only after success."
         case 1:
-            return "Tap a platform row to inspect capabilities and last error details."
+            return statuses.isEmpty ? "Configure adapters on the server, then refresh here." : "Tap a platform row to inspect sync, capability, and error details."
         default:
-            return nil
+            return "Use Edit Connection to change the server URL or API key without losing the last known-good session on failure."
         }
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
-        cell.accessoryType = .none
         cell.detailTextLabel?.numberOfLines = 0
+        cell.selectionStyle = .none
+        cell.accessoryType = .none
 
         switch indexPath.section {
         case 0:
-            if indexPath.row == 0 {
+            let connectedCount = statuses.filter(\.authenticated).count
+            switch indexPath.row {
+            case 0:
                 cell.textLabel?.text = "Server"
                 cell.detailTextLabel?.text = session.displayBaseURL
-            } else {
+            case 1:
                 cell.textLabel?.text = "API Key"
                 cell.detailTextLabel?.text = session.maskedApiKey
+            default:
+                cell.textLabel?.text = "Connected Accounts"
+                cell.detailTextLabel?.text = connectedCount == 0 ? "No authenticated accounts reported yet." : "\(connectedCount) authenticated account\(connectedCount == 1 ? "" : "s")"
             }
-            cell.selectionStyle = .none
         case 1:
             if statuses.isEmpty {
                 cell.textLabel?.text = "No platform accounts found"
                 cell.detailTextLabel?.text = "Refresh after configuring adapters on the server."
-                cell.selectionStyle = .none
             } else {
                 let status = statuses[indexPath.row]
-                cell.textLabel?.text = "\(status.platform.displayName) · \(status.accountName)"
+                cell.textLabel?.text = "\(status.platform.displayName) · \(status.displayAccountName)"
                 cell.detailTextLabel?.text = "\(status.statusSummary)\nRead: \(status.canRead ? "Yes" : "No") · Send: \(status.canSend ? "Yes" : "No")"
                 cell.accessoryType = .disclosureIndicator
+                cell.selectionStyle = .default
             }
         default:
-            if indexPath.row == 0 {
+            cell.selectionStyle = .default
+            switch indexPath.row {
+            case 0:
+                cell.textLabel?.text = "Edit Connection"
+                cell.textLabel?.textColor = view.tintColor
+                cell.detailTextLabel?.text = "Change the server URL or API key."
+                cell.accessoryType = .disclosureIndicator
+            case 1:
                 cell.textLabel?.text = "Refresh Server Status"
                 cell.textLabel?.textColor = view.tintColor
-            } else {
+                cell.detailTextLabel?.text = "Fetch the latest adapter state from the server."
+            default:
                 cell.textLabel?.text = "Log Out"
                 cell.textLabel?.textColor = .systemRed
+                cell.detailTextLabel?.text = "Remove the saved credentials from this device."
             }
-            cell.detailTextLabel?.text = nil
         }
+
         return cell
     }
 
@@ -153,32 +170,17 @@ final class MessagingServerSettingsViewController: UITableViewController {
             guard statuses.indices.contains(indexPath.row) else {
                 return
             }
-            let status = statuses[indexPath.row]
-            let capabilities = [
-                ("Text send", status.capabilities.supportsTextSend),
-                ("Media send", status.capabilities.supportsMediaSend),
-                ("Realtime", status.capabilities.supportsRealtime),
-                ("Suggested replies", status.capabilities.supportsSuggestedReplies),
-                ("Edit", status.capabilities.supportsMessageEdit),
-                ("Delete", status.capabilities.supportsMessageDelete),
-                ("Reactions", status.capabilities.supportsMessageReactions),
-            ]
-            let capabilityText = capabilities.map { "\($0.0): \($0.1 ? "Yes" : "No")" }.joined(separator: "\n")
-            let message = [
-                "Account Key: \(status.accountKey)",
-                "Configured: \(status.configured ? "Yes" : "No")",
-                "Authenticated: \(status.authenticated ? "Yes" : "No")",
-                "Last Sync: \(MessagingServerDate.short(status.lastSyncAt))",
-                status.lastError.map { "Last Error: \($0)" } ?? nil,
-                capabilityText,
-            ].compactMap { $0 }.joined(separator: "\n\n")
-            let alert = UIAlertController(title: "\(status.platform.displayName) · \(status.accountName)", message: message, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "OK", style: .default))
-            present(alert, animated: true)
+            showDetails(for: statuses[indexPath.row])
         case 2:
-            if indexPath.row == 0 {
+            switch indexPath.row {
+            case 0:
+                let viewController = MessagingServerLoginViewController(mode: .edit(currentSession: session), sessionStore: sessionStore) { [weak self] newSession in
+                    self?.onSessionUpdated(newSession)
+                }
+                navigationController?.pushViewController(viewController, animated: true)
+            case 1:
                 loadStatus(showSpinner: true)
-            } else {
+            default:
                 let alert = UIAlertController(title: "Log Out", message: "Remove the saved server URL and API key from this device?", preferredStyle: .alert)
                 alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
                 alert.addAction(UIAlertAction(title: "Log Out", style: .destructive, handler: { [weak self] _ in
@@ -190,5 +192,37 @@ final class MessagingServerSettingsViewController: UITableViewController {
         default:
             break
         }
+    }
+
+    private func showDetails(for status: MessagingServerPlatformStatus) {
+        let capabilities = [
+            ("Text send", status.capabilities.supportsTextSend),
+            ("Media send", status.capabilities.supportsMediaSend),
+            ("Read", status.capabilities.supportsRead),
+            ("Attachment fetch", status.capabilities.supportsAttachmentFetch),
+            ("Realtime", status.capabilities.supportsRealtime),
+            ("Suggested replies", status.capabilities.supportsSuggestedReplies),
+            ("Edit", status.capabilities.supportsMessageEdit),
+            ("Delete", status.capabilities.supportsMessageDelete),
+            ("Reactions", status.capabilities.supportsMessageReactions),
+            ("Profile images", status.capabilities.supportsProfileImages),
+        ]
+
+        let capabilityText = capabilities
+            .map { "\($0.0): \($0.1 ? "Yes" : "No")" }
+            .joined(separator: "\n")
+
+        let message = [
+            "Account Key: \(status.accountKey)",
+            "Configured: \(status.configured ? "Yes" : "No")",
+            "Authenticated: \(status.authenticated ? "Yes" : "No")",
+            "Last Sync: \(MessagingServerDate.short(status.lastSyncAt))",
+            status.lastError.map { "Last Error: \($0)" },
+            capabilityText,
+        ].compactMap { $0 }.joined(separator: "\n\n")
+
+        let alert = UIAlertController(title: "\(status.platform.displayName) · \(status.displayAccountName)", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
     }
 }

@@ -8,6 +8,13 @@ struct MessagingServerRealtimeEvent {
     let id: String
 }
 
+enum MessagingServerRealtimeState: Equatable {
+    case disconnected
+    case connecting
+    case connected
+    case reconnecting
+}
+
 final class MessagingServerRealtimeClient {
     private struct WebSocketFrame: Decodable {
         let type: String
@@ -25,13 +32,20 @@ final class MessagingServerRealtimeClient {
     private let decoder = JSONDecoder()
     private var task: URLSessionWebSocketTask?
     private var shouldReconnect = false
+    private var reconnectDelay: TimeInterval = 2.0
 
     var onEvent: ((MessagingServerRealtimeEvent) -> Void)?
     var onError: ((Error) -> Void)?
+    var onStateChange: ((MessagingServerRealtimeState) -> Void)?
 
     init(session: MessagingServerSession) {
         self.session = session
-        self.urlSession = URLSession(configuration: .default)
+
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 15.0
+        configuration.timeoutIntervalForResource = 30.0
+        configuration.waitsForConnectivity = false
+        self.urlSession = URLSession(configuration: configuration)
     }
 
     func connect() {
@@ -39,6 +53,10 @@ final class MessagingServerRealtimeClient {
             return
         }
         shouldReconnect = true
+        DispatchQueue.main.async { [weak self] in
+            self?.onStateChange?(.connecting)
+        }
+
         let task = urlSession.webSocketTask(with: url)
         self.task = task
         task.resume()
@@ -50,6 +68,9 @@ final class MessagingServerRealtimeClient {
         shouldReconnect = false
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.onStateChange?(.disconnected)
+        }
     }
 
     private func webSocketURL() -> URL? {
@@ -86,10 +107,7 @@ final class MessagingServerRealtimeClient {
                 return
             }
             switch result {
-            case let .failure(error):
-                DispatchQueue.main.async {
-                    self.onError?(error)
-                }
+            case .failure:
                 self.handleDisconnect()
             case let .success(message):
                 self.handle(message)
@@ -114,20 +132,39 @@ final class MessagingServerRealtimeClient {
 
         do {
             let frame = try decoder.decode(WebSocketFrame.self, from: data)
-            if frame.type == "auth.error" {
+            switch frame.type {
+            case "hello":
+                DispatchQueue.main.async {
+                    self.onStateChange?(.connecting)
+                }
+            case "auth.ok":
+                reconnectDelay = 2.0
+                DispatchQueue.main.async {
+                    self.onStateChange?(.connected)
+                }
+            case "auth.error":
+                shouldReconnect = false
                 let error = MessagingServerAPIError.server(frame.error ?? "WebSocket auth failed.")
                 DispatchQueue.main.async {
                     self.onError?(error)
+                    self.onStateChange?(.disconnected)
                 }
-                handleDisconnect()
-                return
-            }
-            guard frame.type == "event", let eventType = frame.eventType, let topic = frame.topic, let payload = frame.payload, let createdAt = frame.createdAt, let id = frame.id else {
-                return
-            }
-            let event = MessagingServerRealtimeEvent(eventType: eventType, topic: topic, payload: payload, createdAt: createdAt, id: id)
-            DispatchQueue.main.async {
-                self.onEvent?(event)
+                task?.cancel(with: .policyViolation, reason: nil)
+                task = nil
+            case "event":
+                guard let eventType = frame.eventType, let topic = frame.topic, let payload = frame.payload, let createdAt = frame.createdAt, let id = frame.id else {
+                    return
+                }
+                let event = MessagingServerRealtimeEvent(eventType: eventType, topic: topic, payload: payload, createdAt: createdAt, id: id)
+                DispatchQueue.main.async {
+                    self.onEvent?(event)
+                }
+            default:
+                if let error = frame.error ?? frame.message {
+                    DispatchQueue.main.async {
+                        self.onError?(MessagingServerAPIError.server(error))
+                    }
+                }
             }
         } catch {
             DispatchQueue.main.async {
@@ -139,9 +176,17 @@ final class MessagingServerRealtimeClient {
     private func handleDisconnect() {
         task = nil
         guard shouldReconnect else {
+            DispatchQueue.main.async {
+                self.onStateChange?(.disconnected)
+            }
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+        DispatchQueue.main.async {
+            self.onStateChange?(.reconnecting)
+        }
+        let nextDelay = reconnectDelay
+        reconnectDelay = min(reconnectDelay * 1.5, 8.0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + nextDelay) { [weak self] in
             self?.connect()
         }
     }

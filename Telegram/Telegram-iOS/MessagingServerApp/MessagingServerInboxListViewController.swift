@@ -1,22 +1,25 @@
 import UIKit
 
-final class MessagingServerInboxListViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
+final class MessagingServerInboxListViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UISearchResultsUpdating {
     private let session: MessagingServerSession
     private let client: MessagingServerAPIClient
 
-    private let statusSummaryLabel = UILabel()
-    private let filterContainer = UIStackView()
-    private let platformScrollView = UIScrollView()
-    private let platformStack = UIStackView()
-    private let accountScrollView = UIScrollView()
-    private let accountStack = UIStackView()
+    private let summaryCard = UIView()
+    private let summaryTitleLabel = UILabel()
+    private let summarySubtitleLabel = UILabel()
+    private let connectionBadgeLabel = PaddingLabel()
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let refreshControl = UIRefreshControl()
+    private let searchController = UISearchController(searchResultsController: nil)
 
     private var platformStatuses: [MessagingServerPlatformStatus] = []
     private var inboxes: [MessagingServerInboxSummary] = []
+    private var displayedInboxes: [MessagingServerInboxSummary] = []
     private var selectedPlatform: MessagingServerPlatform?
     private var selectedAccount: String?
+    private var realtimeClient: MessagingServerRealtimeClient?
+    private var scheduledRefresh: DispatchWorkItem?
+    private var connectionState: MessagingServerRealtimeState = .disconnected
     private var hasLoadedOnce = false
 
     init(session: MessagingServerSession, client: MessagingServerAPIClient) {
@@ -29,56 +32,25 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        realtimeClient?.disconnect()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         title = "Chats"
         navigationItem.largeTitleDisplayMode = .always
-        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(refreshPressed))
-
-        statusSummaryLabel.font = UIFont.systemFont(ofSize: 13.0, weight: .medium)
-        statusSummaryLabel.textColor = .secondaryLabel
-        statusSummaryLabel.numberOfLines = 0
-
-        filterContainer.axis = .vertical
-        filterContainer.spacing = 10.0
-        filterContainer.translatesAutoresizingMaskIntoConstraints = false
-
-        configureFilterScrollView(platformScrollView, stackView: platformStack)
-        configureFilterScrollView(accountScrollView, stackView: accountStack)
-
-        filterContainer.addArrangedSubview(statusSummaryLabel)
-        filterContainer.addArrangedSubview(platformScrollView)
-        filterContainer.addArrangedSubview(accountScrollView)
-        view.addSubview(filterContainer)
-
-        tableView.translatesAutoresizingMaskIntoConstraints = false
-        tableView.dataSource = self
-        tableView.delegate = self
-        tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 72.0
-        tableView.tableFooterView = UIView()
-        refreshControl.addTarget(self, action: #selector(refreshPressed), for: .valueChanged)
-        tableView.refreshControl = refreshControl
-        view.addSubview(tableView)
-
-        NSLayoutConstraint.activate([
-            filterContainer.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10.0),
-            filterContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16.0),
-            filterContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16.0),
-            platformScrollView.heightAnchor.constraint(equalToConstant: 40.0),
-            accountScrollView.heightAnchor.constraint(equalToConstant: 40.0),
-            tableView.topAnchor.constraint(equalTo: filterContainer.bottomAnchor, constant: 8.0),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-
-        reloadFilterChips()
+        configureNavigation()
+        configureSummaryCard()
+        configureTableView()
+        updateConnectionState(.disconnected)
+        applyFilteringAndReload()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        startRealtime()
         if !hasLoadedOnce {
             hasLoadedOnce = true
             loadAllData(showRefreshControl: false)
@@ -87,19 +59,93 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         }
     }
 
-    private func configureFilterScrollView(_ scrollView: UIScrollView, stackView: UIStackView) {
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        stackView.axis = .horizontal
-        stackView.spacing = 8.0
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(stackView)
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        realtimeClient?.disconnect()
+    }
+
+    private func configureNavigation() {
+        searchController.obscuresBackgroundDuringPresentation = false
+        searchController.searchResultsUpdater = self
+        searchController.searchBar.placeholder = "Search chats"
+        navigationItem.searchController = searchController
+        navigationItem.hidesSearchBarWhenScrolling = false
+
+        let refreshItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(refreshPressed))
+        let filterItem = UIBarButtonItem(image: UIImage(systemName: "line.3.horizontal.decrease.circle"), style: .plain, target: self, action: #selector(showFilters(_:)))
+        navigationItem.rightBarButtonItems = [refreshItem, filterItem]
+    }
+
+    private func configureSummaryCard() {
+        summaryCard.translatesAutoresizingMaskIntoConstraints = false
+        summaryCard.backgroundColor = .secondarySystemBackground
+        summaryCard.layer.cornerRadius = 18.0
+        summaryCard.layer.cornerCurve = .continuous
+
+        let headerStack = UIStackView()
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+        headerStack.axis = .vertical
+        headerStack.spacing = 8.0
+        summaryCard.addSubview(headerStack)
+
+        let titleRow = UIStackView()
+        titleRow.axis = .horizontal
+        titleRow.alignment = .center
+        titleRow.spacing = 8.0
+
+        summaryTitleLabel.font = UIFont.systemFont(ofSize: 18.0, weight: .semibold)
+        summaryTitleLabel.numberOfLines = 1
+
+        connectionBadgeLabel.font = UIFont.systemFont(ofSize: 12.0, weight: .semibold)
+        connectionBadgeLabel.textInsets = UIEdgeInsets(top: 5.0, left: 8.0, bottom: 5.0, right: 8.0)
+        connectionBadgeLabel.layer.cornerRadius = 12.0
+        connectionBadgeLabel.layer.cornerCurve = .continuous
+        connectionBadgeLabel.layer.masksToBounds = true
+
+        titleRow.addArrangedSubview(summaryTitleLabel)
+        titleRow.addArrangedSubview(UIView())
+        titleRow.addArrangedSubview(connectionBadgeLabel)
+
+        summarySubtitleLabel.font = UIFont.systemFont(ofSize: 14.0)
+        summarySubtitleLabel.textColor = .secondaryLabel
+        summarySubtitleLabel.numberOfLines = 0
+
+        headerStack.addArrangedSubview(titleRow)
+        headerStack.addArrangedSubview(summarySubtitleLabel)
+
+        view.addSubview(summaryCard)
         NSLayoutConstraint.activate([
-            stackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-            stackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            stackView.heightAnchor.constraint(equalTo: scrollView.heightAnchor),
+            headerStack.topAnchor.constraint(equalTo: summaryCard.topAnchor, constant: 14.0),
+            headerStack.leadingAnchor.constraint(equalTo: summaryCard.leadingAnchor, constant: 14.0),
+            headerStack.trailingAnchor.constraint(equalTo: summaryCard.trailingAnchor, constant: -14.0),
+            headerStack.bottomAnchor.constraint(equalTo: summaryCard.bottomAnchor, constant: -14.0),
+
+            summaryCard.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12.0),
+            summaryCard.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            summaryCard.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+        ])
+    }
+
+    private func configureTableView() {
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.backgroundColor = .systemBackground
+        tableView.register(MessagingServerChatListCell.self, forCellReuseIdentifier: "ChatListCell")
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.separatorStyle = .singleLine
+        tableView.rowHeight = UITableView.automaticDimension
+        tableView.estimatedRowHeight = 86.0
+        tableView.keyboardDismissMode = .onDrag
+
+        refreshControl.addTarget(self, action: #selector(refreshPressed), for: .valueChanged)
+        tableView.refreshControl = refreshControl
+
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: summaryCard.bottomAnchor, constant: 10.0),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
     }
 
@@ -123,7 +169,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         }
 
         group.enter()
-        client.listInboxes(platform: self.selectedPlatform, account: self.selectedAccount) { result in
+        client.listInboxes { result in
             inboxesResult = result
             group.leave()
         }
@@ -133,21 +179,31 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
                 return
             }
             self.refreshControl.endRefreshing()
+
             if case let .success(statuses)? = statusesResult {
-                self.platformStatuses = statuses
-                self.reconcileSelectedAccount()
-                self.reloadFilterChips()
+                self.platformStatuses = statuses.sorted { lhs, rhs in
+                    if lhs.platform.displayName == rhs.platform.displayName {
+                        return lhs.displayAccountName < rhs.displayAccountName
+                    }
+                    return lhs.platform.displayName < rhs.platform.displayName
+                }
             }
-            if case let .success(inboxes)? = inboxesResult {
+
+            switch inboxesResult {
+            case let .success(inboxes):
                 self.inboxes = inboxes
-                self.tableView.reloadData()
+            case let .failure(error):
+                self.presentMessagingServerError(error, title: "Inbox Refresh Failed")
+            case .none:
+                break
             }
+
             if case let .failure(error)? = statusesResult {
                 self.presentMessagingServerError(error, title: "Status Refresh Failed")
-            } else if case let .failure(error)? = inboxesResult {
-                self.presentMessagingServerError(error, title: "Inbox Refresh Failed")
             }
-            self.updateSummary()
+
+            self.reconcileSelectedAccount()
+            self.applyFilteringAndReload()
         }
     }
 
@@ -155,7 +211,7 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         if showRefreshControl && !refreshControl.isRefreshing {
             refreshControl.beginRefreshing()
         }
-        client.listInboxes(platform: selectedPlatform, account: selectedAccount) { [weak self] result in
+        client.listInboxes { [weak self] result in
             guard let self else {
                 return
             }
@@ -163,12 +219,62 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
             switch result {
             case let .success(inboxes):
                 self.inboxes = inboxes
-                self.tableView.reloadData()
-                self.updateSummary()
+                self.applyFilteringAndReload()
             case let .failure(error):
                 self.presentMessagingServerError(error, title: "Inbox Refresh Failed")
             }
         }
+    }
+
+    private func startRealtime() {
+        realtimeClient?.disconnect()
+        let realtimeClient = MessagingServerRealtimeClient(session: session)
+        realtimeClient.onStateChange = { [weak self] state in
+            self?.updateConnectionState(state)
+        }
+        realtimeClient.onEvent = { [weak self] event in
+            guard event.topic.hasPrefix("inbox:") else {
+                return
+            }
+            self?.scheduleRefresh()
+        }
+        realtimeClient.onError = { [weak self] error in
+            self?.showMessagingServerToast(error.localizedDescription)
+        }
+        self.realtimeClient = realtimeClient
+        realtimeClient.connect()
+    }
+
+    private func scheduleRefresh() {
+        scheduledRefresh?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.loadInboxes(showRefreshControl: false)
+        }
+        scheduledRefresh = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+    }
+
+    private func updateConnectionState(_ state: MessagingServerRealtimeState) {
+        connectionState = state
+        switch state {
+        case .connected:
+            connectionBadgeLabel.text = "Live"
+            connectionBadgeLabel.textColor = .systemGreen
+            connectionBadgeLabel.backgroundColor = UIColor.systemGreen.withAlphaComponent(0.14)
+        case .connecting:
+            connectionBadgeLabel.text = "Connecting"
+            connectionBadgeLabel.textColor = .systemBlue
+            connectionBadgeLabel.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.14)
+        case .reconnecting:
+            connectionBadgeLabel.text = "Reconnecting"
+            connectionBadgeLabel.textColor = .systemOrange
+            connectionBadgeLabel.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.16)
+        case .disconnected:
+            connectionBadgeLabel.text = "Offline"
+            connectionBadgeLabel.textColor = .secondaryLabel
+            connectionBadgeLabel.backgroundColor = UIColor.tertiarySystemFill
+        }
+        updateSummary()
     }
 
     private func reconcileSelectedAccount() {
@@ -181,145 +287,189 @@ final class MessagingServerInboxListViewController: UIViewController, UITableVie
         }
     }
 
-    private func reloadFilterChips() {
-        rebuild(stackView: platformStack, buttons: platformButtons(), action: #selector(platformChipPressed(_:)))
-        rebuild(stackView: accountStack, buttons: accountButtons(), action: #selector(accountChipPressed(_:)))
+    private func availableAccountStatuses() -> [MessagingServerPlatformStatus] {
+        platformStatuses.filter { selectedPlatform == nil || $0.platform == selectedPlatform }
+    }
+
+    private func applyFilteringAndReload() {
+        let searchText = searchController.searchBar.text?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+
+        displayedInboxes = inboxes
+            .filter { selectedPlatform == nil || $0.platform == selectedPlatform }
+            .filter { selectedAccount == nil || $0.accountKey == selectedAccount }
+            .filter { inbox in
+                guard !searchText.isEmpty else {
+                    return true
+                }
+                let haystacks = [
+                    inbox.displayTitle,
+                    inbox.lastPreviewText,
+                    inbox.accountKey,
+                    inbox.platform.displayName,
+                    inbox.participants.map(\.displayName).joined(separator: " "),
+                ]
+                return haystacks.joined(separator: " ").lowercased().contains(searchText)
+            }
+            .sorted { lhs, rhs in
+                let leftDate = MessagingServerDate.parse(lhs.lastMessageAt) ?? Date.distantPast
+                let rightDate = MessagingServerDate.parse(rhs.lastMessageAt) ?? Date.distantPast
+                if leftDate == rightDate {
+                    return lhs.displayTitle.localizedCaseInsensitiveCompare(rhs.displayTitle) == .orderedAscending
+                }
+                return leftDate > rightDate
+            }
+
+        tableView.reloadData()
         updateSummary()
     }
 
-    private func rebuild(stackView: UIStackView, buttons: [(title: String, value: String?, selected: Bool)], action: Selector) {
-        stackView.arrangedSubviews.forEach { view in
-            stackView.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        for item in buttons {
-            let button = MessagingServerPillButton(frame: .zero)
-            button.rawValue = item.value
-            button.setTitle(item.title, for: .normal)
-            button.applySelectedStyle(item.selected)
-            button.addTarget(self, action: action, for: .touchUpInside)
-            stackView.addArrangedSubview(button)
-        }
-    }
-
-    private func platformButtons() -> [(title: String, value: String?, selected: Bool)] {
-        var items: [(String, String?, Bool)] = [("All Platforms", nil, selectedPlatform == nil)]
-        let platforms = Array(Set(platformStatuses.map(\.platform))).sorted { $0.displayName < $1.displayName }
-        items.append(contentsOf: platforms.map { platform in
-            (platform.displayName, platform.rawValue, selectedPlatform == platform)
-        })
-        return items
-    }
-
-    private func accountButtons() -> [(title: String, value: String?, selected: Bool)] {
-        var items: [(String, String?, Bool)] = [("All Accounts", nil, selectedAccount == nil)]
-        items.append(contentsOf: availableAccountStatuses().map { status in
-            (status.accountName.isEmpty ? status.accountKey : status.accountName, status.accountKey, selectedAccount == status.accountKey)
-        })
-        return items
-    }
-
-    private func availableAccountStatuses() -> [MessagingServerPlatformStatus] {
-        return platformStatuses
-            .filter { selectedPlatform == nil || $0.platform == selectedPlatform }
-            .sorted { lhs, rhs in
-                if lhs.platform.displayName == rhs.platform.displayName {
-                    return lhs.accountName < rhs.accountName
-                }
-                return lhs.platform.displayName < rhs.platform.displayName
-            }
-    }
-
     private func updateSummary() {
-        let activeStatuses = platformStatuses.filter { $0.authenticated }
-        let platformText = selectedPlatform?.displayName ?? "All platforms"
-        let accountText = selectedAccount ?? "all accounts"
-        statusSummaryLabel.text = "\(activeStatuses.count) connected accounts · \(inboxes.count) inboxes · \(platformText) / \(accountText)\nServer: \(session.displayBaseURL)"
-    }
+        let connectedCount = platformStatuses.filter(\.authenticated).count
+        summaryTitleLabel.text = connectedCount == 0 ? "No connected accounts" : "\(connectedCount) connected account\(connectedCount == 1 ? "" : "s")"
 
-    @objc private func platformChipPressed(_ sender: MessagingServerPillButton) {
-        if let value = sender.rawValue {
-            selectedPlatform = MessagingServerPlatform(rawValue: value)
-        } else {
-            selectedPlatform = nil
+        let selectedPlatformText = selectedPlatform?.displayName ?? "All platforms"
+        let selectedAccountText = selectedAccount.flatMap { platformStatuses.accountName(for: $0) } ?? selectedAccount ?? "All accounts"
+        let stateText: String
+        switch connectionState {
+        case .connected:
+            stateText = "Live updates connected"
+        case .connecting:
+            stateText = "Connecting live updates"
+        case .reconnecting:
+            stateText = "Trying to reconnect live updates"
+        case .disconnected:
+            stateText = "Live updates disconnected"
         }
-        reconcileSelectedAccount()
-        reloadFilterChips()
-        loadInboxes(showRefreshControl: true)
+
+        summarySubtitleLabel.text = [
+            "\(displayedInboxes.count) chats shown · \(selectedPlatformText) · \(selectedAccountText)",
+            stateText,
+            "Server: \(session.displayBaseURL)",
+        ].joined(separator: "\n")
     }
 
-    @objc private func accountChipPressed(_ sender: MessagingServerPillButton) {
-        selectedAccount = sender.rawValue
-        reloadFilterChips()
-        loadInboxes(showRefreshControl: true)
+    @objc private func showFilters(_ sender: UIBarButtonItem) {
+        let alert = UIAlertController(title: "Filters", message: nil, preferredStyle: .actionSheet)
+
+        let selectedPlatformName = selectedPlatform?.displayName ?? "All"
+        alert.addAction(UIAlertAction(title: "Platform: \(selectedPlatformName)", style: .default, handler: { [weak self] _ in
+            self?.presentPlatformFilterSheet(sourceBarButtonItem: sender)
+        }))
+
+        let selectedAccountName = selectedAccount.flatMap { platformStatuses.accountName(for: $0) } ?? selectedAccount ?? "All Accounts"
+        alert.addAction(UIAlertAction(title: "Account: \(selectedAccountName)", style: .default, handler: { [weak self] _ in
+            self?.presentAccountFilterSheet(sourceBarButtonItem: sender)
+        }))
+
+        if selectedPlatform != nil || selectedAccount != nil {
+            alert.addAction(UIAlertAction(title: "Clear Filters", style: .destructive, handler: { [weak self] _ in
+                self?.selectedPlatform = nil
+                self?.selectedAccount = nil
+                self?.applyFilteringAndReload()
+            }))
+        }
+
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.barButtonItem = sender
+        }
+        present(alert, animated: true)
+    }
+
+    private func presentPlatformFilterSheet(sourceBarButtonItem: UIBarButtonItem) {
+        let alert = UIAlertController(title: "Platform", message: nil, preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "All Platforms", style: .default, handler: { [weak self] _ in
+            self?.selectedPlatform = nil
+            self?.reconcileSelectedAccount()
+            self?.applyFilteringAndReload()
+        }))
+
+        let platforms = Array(Set(platformStatuses.map(\.platform))).sorted { $0.displayName < $1.displayName }
+        for platform in platforms {
+            let title = selectedPlatform == platform ? "✓ \(platform.displayName)" : platform.displayName
+            alert.addAction(UIAlertAction(title: title, style: .default, handler: { [weak self] _ in
+                self?.selectedPlatform = platform
+                self?.reconcileSelectedAccount()
+                self?.applyFilteringAndReload()
+            }))
+        }
+
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.barButtonItem = sourceBarButtonItem
+        }
+        present(alert, animated: true)
+    }
+
+    private func presentAccountFilterSheet(sourceBarButtonItem: UIBarButtonItem) {
+        let alert = UIAlertController(title: "Account", message: nil, preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "All Accounts", style: .default, handler: { [weak self] _ in
+            self?.selectedAccount = nil
+            self?.applyFilteringAndReload()
+        }))
+
+        for status in availableAccountStatuses() {
+            let title = selectedAccount == status.accountKey ? "✓ \(status.displayAccountName)" : status.displayAccountName
+            alert.addAction(UIAlertAction(title: title, style: .default, handler: { [weak self] _ in
+                self?.selectedAccount = status.accountKey
+                self?.applyFilteringAndReload()
+            }))
+        }
+
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.barButtonItem = sourceBarButtonItem
+        }
+        present(alert, animated: true)
+    }
+
+    func updateSearchResults(for searchController: UISearchController) {
+        applyFilteringAndReload()
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return max(inboxes.count, 1)
+        max(displayedInboxes.count, 1)
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        if inboxes.isEmpty {
+        guard !displayedInboxes.isEmpty else {
             let cell = UITableViewCell(style: .subtitle, reuseIdentifier: "EmptyCell")
             cell.selectionStyle = .none
-            cell.textLabel?.text = "No inboxes found"
-            cell.detailTextLabel?.text = "Pull to refresh or change the platform/account filters."
+            cell.textLabel?.text = "No chats found"
+            cell.detailTextLabel?.text = searchController.searchBar.text?.isEmpty == false
+                ? "Try a different search term."
+                : "Pull to refresh or adjust the filter menu."
             cell.detailTextLabel?.numberOfLines = 0
             return cell
         }
 
-        let identifier = "InboxCell"
-        let cell = tableView.dequeueReusableCell(withIdentifier: identifier) ?? UITableViewCell(style: .subtitle, reuseIdentifier: identifier)
-        let inbox = inboxes[indexPath.row]
-        let accountName = platformStatuses.accountName(for: inbox.accountKey) ?? inbox.accountKey
-        cell.textLabel?.text = inbox.inboxName.isEmpty ? inbox.inboxId : inbox.inboxName
-        cell.textLabel?.numberOfLines = 1
-        cell.detailTextLabel?.text = "\(inbox.platform.displayName) · \(accountName) · \(inbox.lastMessagePreview ?? "No messages yet")"
-        cell.detailTextLabel?.numberOfLines = 2
-        cell.accessoryType = .disclosureIndicator
-        cell.imageView?.image = UIImage(systemName: iconName(for: inbox.kind))
-        cell.imageView?.tintColor = .systemBlue
-
-        if inbox.unreadCount > 0 {
-            let badgeLabel = PaddingLabel()
-            badgeLabel.text = String(inbox.unreadCount)
-            badgeLabel.font = UIFont.systemFont(ofSize: 12.0, weight: .bold)
-            badgeLabel.textColor = .white
-            badgeLabel.backgroundColor = .systemBlue
-            badgeLabel.layer.cornerRadius = 11.0
-            badgeLabel.layer.masksToBounds = true
-            badgeLabel.textInsets = UIEdgeInsets(top: 4.0, left: 8.0, bottom: 4.0, right: 8.0)
-            cell.accessoryView = badgeLabel
-        } else {
-            cell.accessoryView = nil
-            cell.accessoryType = .disclosureIndicator
+        guard let cell = tableView.dequeueReusableCell(withIdentifier: "ChatListCell", for: indexPath) as? MessagingServerChatListCell else {
+            return UITableViewCell()
         }
 
+        let inbox = displayedInboxes[indexPath.row]
+        let accountName = platformStatuses.accountName(for: inbox.accountKey) ?? inbox.accountKey
+        let configuration = MessagingServerChatListItemConfiguration(
+            title: inbox.displayTitle,
+            subtitle: inbox.lastPreviewText,
+            detail: "\(inbox.platform.displayName) · \(accountName)",
+            unreadCount: inbox.unreadCount,
+            timestamp: MessagingServerDate.listTimestamp(inbox.lastMessageAt),
+            avatarAsset: inbox.avatarAsset,
+            avatarTitle: inbox.avatarTitle
+        )
+        cell.configure(configuration, session: session)
         return cell
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        guard inboxes.indices.contains(indexPath.row) else {
+        guard displayedInboxes.indices.contains(indexPath.row) else {
             return
         }
-        let inbox = inboxes[indexPath.row]
+        let inbox = displayedInboxes[indexPath.row]
         let viewController = MessagingServerChatViewController(session: session, client: client, inbox: inbox)
+        viewController.hidesBottomBarWhenPushed = true
         navigationController?.pushViewController(viewController, animated: true)
-    }
-
-    private func iconName(for kind: MessagingServerInboxKind) -> String {
-        switch kind {
-        case .dm:
-            return "person.crop.circle"
-        case .group:
-            return "person.3"
-        case .channel:
-            return "megaphone"
-        case .order:
-            return "bag"
-        case .unknown:
-            return "bubble.left"
-        }
     }
 }

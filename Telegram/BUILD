@@ -364,27 +364,9 @@ swift_library(
         "Telegram-iOS/Application.swift",
         "Telegram-iOS/MessagingServerApp/**/*.swift",
     ]),
-    data = [
-        ":Icons",
-        ":AppResources",
-        ":AppIntentVocabularyResources",
-        ":InfoPlistStringResources",
-        "//submodules/LegacyComponents:LegacyComponentsResources",
-        "//submodules/LegacyComponents:LegacyComponentsAssets",
-        "//submodules/OverlayStatusController:OverlayStatusControllerResources",
-        "//submodules/PasswordSetupUI:PasswordSetupUIResources",
-        "//submodules/PasswordSetupUI:PasswordSetupUIAssets",
-        "//submodules/PremiumUI:PremiumUIResources",
-        "//submodules/DrawingUI:DrawingUIResources",
-        "//submodules/TelegramUI:TelegramUIResources",
-        "//submodules/TelegramUI:TelegramUIAssets",
-        "//submodules/TelegramUI/Components/Calls/CallScreen:Assets",
-        ":GeneratedPresentationStrings/Resources/PresentationStrings.data",
-    ],
+    data = [],
     deps = [
         ":LibSDKFrameworks",
-        "//submodules/TelegramUI:TelegramUI",
-        "//third-party/boringssl:crypto",
     ],
 )
 
@@ -1526,13 +1508,7 @@ ios_extension(
         "//conditions:default": "@build_configuration//provisioning:NotificationService.mobileprovision",
     }),
     deps = ["//Telegram/NotificationService:NotificationServiceExtensionLib"],
-    frameworks = [
-        ":MtProtoKitFramework",
-        ":SwiftSignalKitFramework",
-        ":PostboxFramework",
-        ":TelegramCoreFramework",
-        ":TelegramUIFramework",
-    ],
+    frameworks = [],
 )
 
 plist_fragment(
@@ -1752,27 +1728,11 @@ ios_application(
         ":LaunchScreen",
         #":DefaultAppIcon",
     ],
-    frameworks = [
-        ":MtProtoKitFramework",
-        ":SwiftSignalKitFramework",
-        ":PostboxFramework",
-        ":TelegramCoreFramework",
-        ":TelegramUIFramework",
-    ],
+    frameworks = [],
     strings = [
         ":AppStringResources",
     ],
-    extensions = select({
-        ":disableExtensionsSetting": [],
-        "//conditions:default": [
-            ":ShareExtension",
-            ":NotificationContentExtension",
-            ":NotificationServiceExtension" + notificationServiceExtensionVersion,
-            ":IntentsExtension",
-            ":WidgetExtension",
-            ":BroadcastUploadExtension",
-        ],
-    }),
+    extensions = [],
     deps = [
         ":Main",
         ":Lib",

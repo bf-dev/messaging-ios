@@ -1,5 +1,22 @@
 import Foundation
 
+final class MessagingServerTaskHandle {
+    private let lock = NSLock()
+    private var onCancel: (() -> Void)?
+
+    init(onCancel: (() -> Void)? = nil) {
+        self.onCancel = onCancel
+    }
+
+    func cancel() {
+        lock.lock()
+        let action = onCancel
+        onCancel = nil
+        lock.unlock()
+        action?()
+    }
+}
+
 enum MessagingServerAPIError: LocalizedError {
     case invalidURL
     case invalidResponse
@@ -7,6 +24,8 @@ enum MessagingServerAPIError: LocalizedError {
     case httpStatus(Int, String)
     case emptyEnvelope
     case transport(Error)
+    case timeout(TimeInterval)
+    case cancelled
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +41,10 @@ enum MessagingServerAPIError: LocalizedError {
             return "The server returned no payload."
         case let .transport(error):
             return error.localizedDescription
+        case let .timeout(seconds):
+            return "Connection timed out after \(Int(seconds)) seconds."
+        case .cancelled:
+            return "Request cancelled."
         }
     }
 }
@@ -38,18 +61,72 @@ final class MessagingServerAPIClient {
         let error: String?
     }
 
+    private final class CompletionGate {
+        private let lock = NSLock()
+        private var isFinished = false
+
+        func run(_ block: () -> Void) {
+            lock.lock()
+            guard !isFinished else {
+                lock.unlock()
+                return
+            }
+            isFinished = true
+            lock.unlock()
+            block()
+        }
+    }
+
     private let session: MessagingServerSession
     private let urlSession: URLSession
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
-    init(session: MessagingServerSession, urlSession: URLSession = .shared) {
+    init(session: MessagingServerSession, urlSession: URLSession? = nil) {
         self.session = session
-        self.urlSession = urlSession
+        self.urlSession = urlSession ?? Self.makeDefaultURLSession()
     }
 
-    func validateSession(completion: @escaping (Result<[MessagingServerPlatformStatus], Error>) -> Void) {
-        listPlatformStatus(completion: completion)
+    func validateSession(
+        timeout: TimeInterval = 10.0,
+        completion: @escaping (Result<[MessagingServerPlatformStatus], Error>) -> Void
+    ) -> MessagingServerTaskHandle {
+        let gate = CompletionGate()
+        var validationTask: URLSessionDataTask?
+
+        let timeoutWorkItem = DispatchWorkItem {
+            gate.run {
+                validationTask?.cancel()
+                completion(.failure(MessagingServerAPIError.timeout(timeout)))
+            }
+        }
+
+        validationTask = requestTask(
+            path: "/v1/platforms/status",
+            queryItems: [],
+            timeout: timeout,
+            completion: { result in
+                gate.run {
+                    timeoutWorkItem.cancel()
+                    switch result {
+                    case let .failure(error as MessagingServerAPIError) where error == .cancelled:
+                        break
+                    case let .failure(error):
+                        completion(.failure(error))
+                    case let .success(statuses):
+                        completion(.success(statuses))
+                    }
+                }
+            }
+        )
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: timeoutWorkItem)
+        return MessagingServerTaskHandle {
+            timeoutWorkItem.cancel()
+            gate.run {
+                validationTask?.cancel()
+            }
+        }
     }
 
     func listPlatformStatus(
@@ -225,13 +302,16 @@ final class MessagingServerAPIClient {
         completion: @escaping (Result<MessagingServerCachedAsset, Error>) -> Void
     ) {
         guard let url = makeURL(path: "/v1/uploads", queryItems: []) else {
-            completion(.failure(MessagingServerAPIError.invalidURL))
+            DispatchQueue.main.async {
+                completion(.failure(MessagingServerAPIError.invalidURL))
+            }
             return
         }
 
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 45.0
         request.setValue(session.apiKey, forHTTPHeaderField: "X-Messaging-Api-Key")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = multipartBody(boundary: boundary, attachment: attachment)
@@ -314,22 +394,35 @@ final class MessagingServerAPIClient {
         )
     }
 
-    private func request<T: Decodable>(
+    private static func makeDefaultURLSession() -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 15.0
+        configuration.timeoutIntervalForResource = 30.0
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration)
+    }
+
+    @discardableResult
+    private func requestTask<T: Decodable>(
         path: String,
         method: String = "GET",
         queryItems: [URLQueryItem] = [],
         rawBody: Data? = nil,
         contentType: String? = nil,
+        timeout: TimeInterval? = nil,
         completion: @escaping (Result<T, Error>) -> Void
-    ) {
+    ) -> URLSessionDataTask? {
         guard let url = makeURL(path: path, queryItems: queryItems) else {
-            completion(.failure(MessagingServerAPIError.invalidURL))
-            return
+            DispatchQueue.main.async {
+                completion(.failure(MessagingServerAPIError.invalidURL))
+            }
+            return nil
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue(session.apiKey, forHTTPHeaderField: "X-Messaging-Api-Key")
+        request.timeoutInterval = timeout ?? 15.0
         if let contentType {
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
@@ -339,6 +432,25 @@ final class MessagingServerAPIClient {
             self?.handleResult(data: data, response: response, error: error, completion: completion)
         }
         task.resume()
+        return task
+    }
+
+    private func request<T: Decodable>(
+        path: String,
+        method: String = "GET",
+        queryItems: [URLQueryItem] = [],
+        rawBody: Data? = nil,
+        contentType: String? = nil,
+        completion: @escaping (Result<T, Error>) -> Void
+    ) {
+        _ = requestTask(
+            path: path,
+            method: method,
+            queryItems: queryItems,
+            rawBody: rawBody,
+            contentType: contentType,
+            completion: completion
+        )
     }
 
     private func request<T: Decodable, Body: Encodable>(
@@ -357,7 +469,9 @@ final class MessagingServerAPIClient {
                 completion: completion
             )
         } catch {
-            completion(.failure(error))
+            DispatchQueue.main.async {
+                completion(.failure(error))
+            }
         }
     }
 
@@ -367,6 +481,18 @@ final class MessagingServerAPIClient {
         error: Error?,
         completion: @escaping (Result<T, Error>) -> Void
     ) {
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            DispatchQueue.main.async {
+                completion(.failure(MessagingServerAPIError.cancelled))
+            }
+            return
+        }
+        if let urlError = error as? URLError, [.timedOut, .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet].contains(urlError.code) {
+            DispatchQueue.main.async {
+                completion(.failure(MessagingServerAPIError.transport(urlError)))
+            }
+            return
+        }
         if let error {
             DispatchQueue.main.async {
                 completion(.failure(MessagingServerAPIError.transport(error)))
@@ -440,7 +566,7 @@ final class MessagingServerAPIClient {
     }
 
     private func encoded(_ value: String) -> String {
-        return value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
+        value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
     }
 
     private func multipartBody(boundary: String, attachment: MessagingServerUploadDraft) -> Data {
@@ -451,5 +577,24 @@ final class MessagingServerAPIClient {
         body.append(attachment.data)
         body.append(Data("\r\n--\(boundary)--\r\n".utf8))
         return body
+    }
+}
+
+extension MessagingServerAPIError: Equatable {
+    static func == (lhs: MessagingServerAPIError, rhs: MessagingServerAPIError) -> Bool {
+        switch (lhs, rhs) {
+        case (.invalidURL, .invalidURL), (.invalidResponse, .invalidResponse), (.emptyEnvelope, .emptyEnvelope), (.cancelled, .cancelled):
+            return true
+        case let (.server(left), .server(right)):
+            return left == right
+        case let (.httpStatus(leftCode, leftMessage), .httpStatus(rightCode, rightMessage)):
+            return leftCode == rightCode && leftMessage == rightMessage
+        case let (.timeout(left), .timeout(right)):
+            return left == right
+        case let (.transport(left), .transport(right)):
+            return left.localizedDescription == right.localizedDescription
+        default:
+            return false
+        }
     }
 }

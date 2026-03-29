@@ -1,18 +1,34 @@
 import UIKit
 
 final class MessagingServerLoginViewController: UIViewController, UITextFieldDelegate {
+    enum Mode {
+        case onboarding
+        case edit(currentSession: MessagingServerSession)
+    }
+
+    private let mode: Mode
     private let sessionStore: MessagingServerSessionStore
     private let onLogin: (MessagingServerSession) -> Void
 
+    private let scrollView = UIScrollView()
+    private let contentView = UIView()
+    private let stackView = UIStackView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
-    private let baseURLField = UITextField()
-    private let apiKeyField = UITextField()
-    private let loginButton = UIButton(type: .system)
-    private let activityIndicator = UIActivityIndicatorView(style: .medium)
-    private let stackView = UIStackView()
+    private let apiKeyField = MessagingServerInputField()
+    private let baseURLField = MessagingServerInputField()
+    private let baseURLSummaryLabel = UILabel()
+    private let advancedButton = UIButton(type: .system)
+    private let serverContainer = UIStackView()
+    private let timeoutLabel = UILabel()
+    private let connectButton = MessagingServerPrimaryButton(frame: .zero)
 
-    init(sessionStore: MessagingServerSessionStore, onLogin: @escaping (MessagingServerSession) -> Void) {
+    private var validationHandle: MessagingServerTaskHandle?
+    private var isConnecting = false
+    private var isServerFieldVisible = false
+
+    init(mode: Mode, sessionStore: MessagingServerSessionStore, onLogin: @escaping (MessagingServerSession) -> Void) {
+        self.mode = mode
         self.sessionStore = sessionStore
         self.onLogin = onLogin
         super.init(nibName: nil, bundle: nil)
@@ -22,101 +38,261 @@ final class MessagingServerLoginViewController: UIViewController, UITextFieldDel
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        validationHandle?.cancel()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
-        navigationItem.hidesBackButton = true
-        navigationItem.title = "Messaging Server"
+        navigationItem.largeTitleDisplayMode = .never
 
-        titleLabel.text = "Messaging Server"
-        titleLabel.font = UIFont.systemFont(ofSize: 32.0, weight: .bold)
+        configureFields()
+        configureLayout()
+        configureCopy()
+        configureNotifications()
+        updateServerFieldVisibility(animated: false)
+        updateConnectButtonState()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if (apiKeyField.text ?? "").isEmpty {
+            apiKeyField.becomeFirstResponder()
+        }
+    }
+
+    private func configureFields() {
+        let initialServer = currentServerString()
+        baseURLField.text = initialServer
+        baseURLField.placeholder = "Server URL"
+        baseURLField.keyboardType = .URL
+        baseURLField.returnKeyType = .next
+        baseURLField.delegate = self
+
+        apiKeyField.placeholder = "API key"
+        apiKeyField.keyboardType = .asciiCapable
+        apiKeyField.autocapitalizationType = .none
+        apiKeyField.autocorrectionType = .no
+        apiKeyField.isSecureTextEntry = true
+        apiKeyField.returnKeyType = .go
+        apiKeyField.delegate = self
+        apiKeyField.addTarget(self, action: #selector(textFieldEditingChanged), for: .editingChanged)
+        baseURLField.addTarget(self, action: #selector(textFieldEditingChanged), for: .editingChanged)
+
+        if case let .edit(currentSession) = mode {
+            apiKeyField.text = currentSession.apiKey
+            isServerFieldVisible = true
+        }
+
+        baseURLSummaryLabel.font = UIFont.systemFont(ofSize: 14.0)
+        baseURLSummaryLabel.textColor = .secondaryLabel
+        baseURLSummaryLabel.numberOfLines = 0
+
+        advancedButton.titleLabel?.font = UIFont.systemFont(ofSize: 15.0, weight: .semibold)
+        advancedButton.addTarget(self, action: #selector(toggleServerField), for: .touchUpInside)
+
+        serverContainer.axis = .vertical
+        serverContainer.spacing = 10.0
+        serverContainer.addArrangedSubview(baseURLField)
+
+        timeoutLabel.font = UIFont.systemFont(ofSize: 14.0)
+        timeoutLabel.textColor = .secondaryLabel
+        timeoutLabel.numberOfLines = 0
+        timeoutLabel.text = "We verify the connection before saving. Connect automatically times out after 10 seconds, so the button never hangs."
+
+        connectButton.addTarget(self, action: #selector(connectPressed), for: .touchUpInside)
+    }
+
+    private func configureLayout() {
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        stackView.axis = .vertical
+        stackView.spacing = 18.0
+
+        titleLabel.font = UIFont.systemFont(ofSize: 31.0, weight: .bold)
+        titleLabel.numberOfLines = 0
         titleLabel.textAlignment = .center
 
-        subtitleLabel.text = "Sign in with a server URL and API key. Telegram backend code remains in the repo, but this app now talks directly to messaging-server."
-        subtitleLabel.font = UIFont.systemFont(ofSize: 15.0)
+        subtitleLabel.font = UIFont.systemFont(ofSize: 16.0)
         subtitleLabel.textColor = .secondaryLabel
         subtitleLabel.numberOfLines = 0
         subtitleLabel.textAlignment = .center
 
-        configureTextField(baseURLField, placeholder: "Server URL", keyboardType: .URL)
-        baseURLField.text = sessionStore.lastBaseURLString()
-        baseURLField.returnKeyType = .next
-
-        configureTextField(apiKeyField, placeholder: "API key", keyboardType: .asciiCapable)
-        apiKeyField.isSecureTextEntry = true
-        apiKeyField.returnKeyType = .done
-
-        loginButton.setTitle("Connect", for: .normal)
-        loginButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
-        loginButton.backgroundColor = view.tintColor
-        loginButton.tintColor = .white
-        loginButton.layer.cornerRadius = 14.0
-        loginButton.contentEdgeInsets = UIEdgeInsets(top: 14.0, left: 20.0, bottom: 14.0, right: 20.0)
-        loginButton.addTarget(self, action: #selector(loginPressed), for: .touchUpInside)
-
-        activityIndicator.hidesWhenStopped = true
-
-        let buttonRow = UIView()
-        buttonRow.translatesAutoresizingMaskIntoConstraints = false
-        loginButton.translatesAutoresizingMaskIntoConstraints = false
-        activityIndicator.translatesAutoresizingMaskIntoConstraints = false
-        buttonRow.addSubview(loginButton)
-        buttonRow.addSubview(activityIndicator)
-        NSLayoutConstraint.activate([
-            loginButton.topAnchor.constraint(equalTo: buttonRow.topAnchor),
-            loginButton.leadingAnchor.constraint(equalTo: buttonRow.leadingAnchor),
-            loginButton.trailingAnchor.constraint(equalTo: buttonRow.trailingAnchor),
-            loginButton.bottomAnchor.constraint(equalTo: buttonRow.bottomAnchor),
-            activityIndicator.centerYAnchor.constraint(equalTo: loginButton.centerYAnchor),
-            activityIndicator.trailingAnchor.constraint(equalTo: loginButton.trailingAnchor, constant: -16.0),
-        ])
-
-        stackView.axis = .vertical
-        stackView.spacing = 16.0
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-        [titleLabel, subtitleLabel, baseURLField, apiKeyField, buttonRow].forEach(stackView.addArrangedSubview)
-        view.addSubview(stackView)
+        view.addSubview(scrollView)
+        scrollView.addSubview(contentView)
+        contentView.addSubview(stackView)
 
         NSLayoutConstraint.activate([
-            baseURLField.heightAnchor.constraint(equalToConstant: 52.0),
-            apiKeyField.heightAnchor.constraint(equalToConstant: 52.0),
-            stackView.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
-            stackView.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -40.0),
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+
+            stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 28.0),
+            stackView.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -28.0),
         ])
+
+        stackView.addArrangedSubview(titleLabel)
+        stackView.addArrangedSubview(subtitleLabel)
+        stackView.addArrangedSubview(apiKeyField)
+        stackView.addArrangedSubview(baseURLSummaryLabel)
+        stackView.addArrangedSubview(advancedButton)
+        stackView.addArrangedSubview(serverContainer)
+        stackView.addArrangedSubview(timeoutLabel)
+        stackView.addArrangedSubview(connectButton)
     }
 
-    private func configureTextField(_ textField: UITextField, placeholder: String, keyboardType: UIKeyboardType) {
-        textField.delegate = self
-        textField.placeholder = placeholder
-        textField.keyboardType = keyboardType
-        textField.autocapitalizationType = .none
-        textField.autocorrectionType = .no
-        textField.spellCheckingType = .no
-        textField.borderStyle = .none
-        textField.backgroundColor = .secondarySystemBackground
-        textField.layer.cornerRadius = 14.0
-        textField.clearButtonMode = .whileEditing
-        textField.leftView = UIView(frame: CGRect(x: 0.0, y: 0.0, width: 14.0, height: 10.0))
-        textField.leftViewMode = .always
+    private func configureCopy() {
+        switch mode {
+        case .onboarding:
+            navigationItem.title = "Connect"
+            titleLabel.text = "Sign in with your API key"
+            subtitleLabel.text = "We keep the familiar Telegram-style step-by-step flow, while still connecting directly to your messaging-server backend."
+            connectButton.setTitle("Connect", for: .normal)
+            if sessionStore.lastBaseURLString() != MessagingServerSessionStore.defaultBaseURL {
+                isServerFieldVisible = true
+            }
+        case .edit:
+            navigationItem.title = "Edit Connection"
+            titleLabel.text = "Update your connection"
+            subtitleLabel.text = "Your current saved session stays untouched until the new server URL and API key validate successfully."
+            connectButton.setTitle("Save & Connect", for: .normal)
+            isServerFieldVisible = true
+        }
+
+        baseURLSummaryLabel.text = "Server: \(currentServerString())"
     }
 
-    @objc private func loginPressed() {
+    private func configureNotifications() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+    }
+
+    private func currentServerString() -> String {
+        switch mode {
+        case let .edit(currentSession):
+            return currentSession.displayBaseURL
+        case .onboarding:
+            return sessionStore.lastBaseURLString()
+        }
+    }
+
+    private func setLoading(_ loading: Bool) {
+        isConnecting = loading
+        apiKeyField.isEnabled = !loading
+        baseURLField.isEnabled = !loading
+        advancedButton.isEnabled = !loading
+        connectButton.setLoading(loading)
+        updateConnectButtonState()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if (apiKeyField.text ?? "").isEmpty {
+            apiKeyField.becomeFirstResponder()
+        }
+    }
+
+    private func updateConnectButtonState() {
+        let hasAPIKey = !(apiKeyField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        connectButton.isEnabled = !isConnecting && hasAPIKey
+        connectButton.alpha = connectButton.isEnabled ? 1.0 : 0.7
+    }
+
+    private func updateServerFieldVisibility(animated: Bool) {
+        serverContainer.isHidden = !isServerFieldVisible
+        advancedButton.setTitle(isServerFieldVisible ? "Hide server" : "Use a different server", for: .normal)
+        baseURLSummaryLabel.isHidden = isServerFieldVisible
+        baseURLSummaryLabel.text = "Server: \((baseURLField.text ?? currentServerString()).trimmingCharacters(in: .whitespacesAndNewlines))"
+        guard animated else {
+            return
+        }
+        UIView.animate(withDuration: 0.22) {
+            self.view.layoutIfNeeded()
+        }
+    }
+
+    @objc private func textFieldEditingChanged() {
+        baseURLSummaryLabel.text = "Server: \((baseURLField.text ?? currentServerString()).trimmingCharacters(in: .whitespacesAndNewlines))"
+        updateConnectButtonState()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if (apiKeyField.text ?? "").isEmpty {
+            apiKeyField.becomeFirstResponder()
+        }
+    }
+
+    @objc private func toggleServerField() {
+        isServerFieldVisible.toggle()
+        updateServerFieldVisibility(animated: true)
+    }
+
+    @objc private func appDidEnterBackground() {
+        cancelValidation(showToast: true)
+    }
+
+    private func cancelValidation(showToast: Bool) {
+        guard isConnecting else {
+            validationHandle = nil
+            return
+        }
+        validationHandle?.cancel()
+        validationHandle = nil
+        setLoading(false)
+        if showToast {
+            showMessagingServerToast("Connection cancelled. Tap Connect to try again.")
+        }
+    }
+
+    @objc private func connectPressed() {
+        guard !isConnecting else {
+            return
+        }
+
         view.endEditing(true)
+
+        let rawBaseURL = (baseURLField.text ?? currentServerString())
         do {
-            let provisionalSession = try sessionStore.save(baseURLString: baseURLField.text ?? MessagingServerSessionStore.defaultBaseURL, apiKey: apiKeyField.text ?? "")
+            let draftSession = try sessionStore.makeDraftSession(baseURLString: rawBaseURL, apiKey: apiKeyField.text ?? "")
+            let client = MessagingServerAPIClient(session: draftSession)
             setLoading(true)
-            let client = MessagingServerAPIClient(session: provisionalSession)
-            client.validateSession { [weak self] result in
+
+            validationHandle = client.validateSession(timeout: 10.0) { [weak self] result in
                 guard let self else {
                     return
                 }
+                self.validationHandle = nil
                 self.setLoading(false)
+
                 switch result {
                 case .success:
-                    self.onLogin(provisionalSession)
+                    do {
+                        try self.sessionStore.persist(draftSession)
+                        self.onLogin(draftSession)
+                    } catch {
+                        self.presentMessagingServerError(error, title: "Unable to Save Session")
+                    }
                 case let .failure(error):
-                    self.sessionStore.clear()
+                    if let apiError = error as? MessagingServerAPIError, apiError == .cancelled {
+                        return
+                    }
                     self.presentMessagingServerError(error, title: "Unable to Connect")
                 }
             }
@@ -125,24 +301,11 @@ final class MessagingServerLoginViewController: UIViewController, UITextFieldDel
         }
     }
 
-    private func setLoading(_ loading: Bool) {
-        loginButton.isEnabled = !loading
-        baseURLField.isEnabled = !loading
-        apiKeyField.isEnabled = !loading
-        if loading {
-            activityIndicator.startAnimating()
-            loginButton.alpha = 0.8
-        } else {
-            activityIndicator.stopAnimating()
-            loginButton.alpha = 1.0
-        }
-    }
-
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         if textField === baseURLField {
             apiKeyField.becomeFirstResponder()
         } else {
-            loginPressed()
+            connectPressed()
         }
         return true
     }
