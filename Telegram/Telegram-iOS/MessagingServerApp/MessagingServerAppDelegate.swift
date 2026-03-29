@@ -1,3 +1,4 @@
+import ChatListUI
 import Display
 import NavigationBarImpl
 import TabBarUI
@@ -88,9 +89,12 @@ final class MessagingServerAppDelegate: UIResponder, UIApplicationDelegate {
 
     private func makeAuthenticatedRoot(session: MessagingServerSession) -> UIViewController {
         let client = MessagingServerAPIClient(session: session)
+        let navigationController = MessagingServerTelegramRootController(theme: MessagingServerTelegramPresentation.navigationControllerTheme)
         let rootController = MessagingServerTelegramMainTabController(
+            rootController: navigationController,
             session: session,
             client: client,
+            windowStyle: window.map { WindowUserInterfaceStyle(style: $0.traitCollection.userInterfaceStyle) } ?? .light,
             sessionStore: context.sessionStore,
             onSessionUpdated: { [weak self] _ in
                 self?.installRoot(animated: true)
@@ -100,24 +104,27 @@ final class MessagingServerAppDelegate: UIResponder, UIApplicationDelegate {
                 self?.installRoot(animated: true)
             }
         )
-        let navigationController = NavigationController(mode: .automaticMasterDetail, theme: MessagingServerTelegramPresentation.navigationControllerTheme)
         navigationController.setViewControllers([rootController], animated: false)
         return navigationController
     }
 }
 
 final class MessagingServerTelegramMainTabController: TabBarControllerImpl {
+    private weak var rootController: MessagingServerTelegramRootController?
+    private let settingsController: MessagingServerSettingsViewController
+    private var runtimeAdapter: MessagingServerTelegramRuntimeAdapter?
+
     init(
+        rootController: MessagingServerTelegramRootController,
         session: MessagingServerSession,
         client: MessagingServerAPIClient,
+        windowStyle: WindowUserInterfaceStyle,
         sessionStore: MessagingServerSessionStore,
         onSessionUpdated: @escaping (MessagingServerSession) -> Void,
         onLogout: @escaping () -> Void
     ) {
+        self.rootController = rootController
         let presentationData = MessagingServerTelegramPresentation.presentationData
-        super.init(theme: presentationData.theme, strings: presentationData.strings)
-        navigationPresentation = .master
-
         let inboxes = MessagingServerInboxListViewController(session: session, client: client)
         inboxes.title = "Chats"
         inboxes.navigationPresentation = .master
@@ -141,8 +148,39 @@ final class MessagingServerTelegramMainTabController: TabBarControllerImpl {
             image: UIImage(systemName: "gearshape"),
             selectedImage: UIImage(systemName: "gearshape.fill")
         )
+        self.settingsController = settings
+
+        super.init(theme: presentationData.theme, strings: presentationData.strings)
+        navigationPresentation = .master
 
         setControllers([inboxes, settings], selectedIndex: 0)
+
+        rootController.mainTabController = self
+        rootController.chatsController = inboxes
+        rootController.settingsController = settings
+
+        if let runtimeAdapter = MessagingServerTelegramRuntimeAdapter(
+            session: session,
+            client: client,
+            windowStyle: windowStyle
+        ) {
+            self.runtimeAdapter = runtimeAdapter
+            runtimeAdapter.bootstrap { [weak self] result in
+                guard let self else {
+                    return
+                }
+                switch result {
+                case .failure:
+                    break
+                case let .success(context):
+                    let chatsController = runtimeAdapter.makeChatListController(context: context)
+                    let selectedIndex = self.selectedIndex
+                    self.setControllers([chatsController, self.settingsController], selectedIndex: selectedIndex)
+                    self.rootController?.chatsController = chatsController
+                    self.rootController?.settingsController = self.settingsController
+                }
+            }
+        }
     }
 
     required init?(coder: NSCoder) {
