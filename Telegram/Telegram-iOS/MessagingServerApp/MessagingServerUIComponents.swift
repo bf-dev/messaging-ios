@@ -192,6 +192,255 @@ final class MessagingServerInputField: UITextField {
     }
 }
 
+// Adapted from the original Telegram iOS client:
+// submodules/TelegramUI/Components/Utils/RoundedRectWithTailPath/Sources/RoundedRectWithTailPath.swift
+private func messagingServerTelegramRoundedRectWithTailPath(
+    rectSize: CGSize,
+    cornerRadius: CGFloat? = nil,
+    tailSize: CGSize = CGSize(width: 20.0, height: 9.0),
+    tailRadius: CGFloat = 4.0,
+    tailPosition: CGFloat? = 0.5,
+    transformTail: Bool = true
+) -> UIBezierPath {
+    let cornerRadius: CGFloat = cornerRadius ?? rectSize.height / 2.0
+    let tailWidth: CGFloat = tailSize.width
+    let tailHeight: CGFloat = tailSize.height
+
+    let rect = CGRect(origin: CGPoint(x: 0.0, y: tailHeight), size: rectSize)
+
+    guard let tailPosition else {
+        return UIBezierPath(cgPath: CGPath(roundedRect: rect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil))
+    }
+
+    let cutoff: CGFloat = 0.27
+
+    let path = UIBezierPath()
+    path.move(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius))
+
+    var leftArcEndAngle: CGFloat = .pi / 2.0
+    var leftConnectionArcRadius = tailRadius
+    var tailLeftHalfWidth: CGFloat = tailWidth / 2.0
+    var tailLeftArcStartAngle: CGFloat = -.pi / 4.0
+    var tailLeftHalfRadius = tailRadius
+
+    var rightArcStartAngle: CGFloat = -.pi / 2.0
+    var rightConnectionArcRadius = tailRadius
+    var tailRightHalfWidth: CGFloat = tailWidth / 2.0
+    var tailRightArcStartAngle: CGFloat = .pi / 4.0
+    var tailRightHalfRadius = tailRadius
+
+    if transformTail {
+        if tailPosition < 0.5 {
+            let fraction = max(0.0, tailPosition - 0.15) / 0.35
+            leftArcEndAngle *= fraction
+
+            let connectionFraction = max(0.0, tailPosition - 0.35) / 0.15
+            leftConnectionArcRadius *= connectionFraction
+
+            if tailPosition < cutoff {
+                let fraction = tailPosition / cutoff
+                tailLeftHalfWidth *= fraction
+                tailLeftArcStartAngle *= fraction
+                tailLeftHalfRadius *= fraction
+            }
+        } else if tailPosition > 0.5 {
+            let mirroredTailPosition = 1.0 - tailPosition
+            let fraction = max(0.0, mirroredTailPosition - 0.15) / 0.35
+            rightArcStartAngle *= fraction
+
+            let connectionFraction = max(0.0, mirroredTailPosition - 0.35) / 0.15
+            rightConnectionArcRadius *= connectionFraction
+
+            if mirroredTailPosition < cutoff {
+                let fraction = mirroredTailPosition / cutoff
+                tailRightHalfWidth *= fraction
+                tailRightArcStartAngle *= fraction
+                tailRightHalfRadius *= fraction
+            }
+        }
+    }
+
+    path.addArc(
+        withCenter: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius),
+        radius: cornerRadius,
+        startAngle: .pi,
+        endAngle: .pi + max(0.0001, leftArcEndAngle),
+        clockwise: true
+    )
+
+    let leftArrowStart = max(rect.minX, rect.minX + rectSize.width * tailPosition - tailLeftHalfWidth - leftConnectionArcRadius)
+    path.addArc(
+        withCenter: CGPoint(x: leftArrowStart, y: rect.minY - leftConnectionArcRadius),
+        radius: leftConnectionArcRadius,
+        startAngle: .pi / 2.0,
+        endAngle: .pi / 4.0,
+        clockwise: false
+    )
+
+    path.addLine(to: CGPoint(x: max(rect.minX, rect.minX + rectSize.width * tailPosition - tailLeftHalfRadius), y: rect.minY - tailHeight))
+
+    path.addArc(
+        withCenter: CGPoint(x: rect.minX + rectSize.width * tailPosition, y: rect.minY - tailHeight + tailRadius / 2.0),
+        radius: tailRadius,
+        startAngle: -.pi / 2.0 + tailLeftArcStartAngle,
+        endAngle: -.pi / 2.0 + tailRightArcStartAngle,
+        clockwise: true
+    )
+
+    path.addLine(to: CGPoint(x: min(rect.maxX, rect.minX + rectSize.width * tailPosition + tailRightHalfRadius), y: rect.minY - tailHeight))
+
+    let rightArrowStart = min(rect.maxX, rect.minX + rectSize.width * tailPosition + tailRightHalfWidth + rightConnectionArcRadius)
+    path.addArc(
+        withCenter: CGPoint(x: rightArrowStart, y: rect.minY - rightConnectionArcRadius),
+        radius: rightConnectionArcRadius,
+        startAngle: .pi - .pi / 4.0,
+        endAngle: .pi / 2.0,
+        clockwise: false
+    )
+
+    path.addArc(
+        withCenter: CGPoint(x: rect.minX + rectSize.width - cornerRadius, y: rect.minY + cornerRadius),
+        radius: cornerRadius,
+        startAngle: min(-0.0001, rightArcStartAngle),
+        endAngle: 0.0,
+        clockwise: true
+    )
+
+    path.addLine(to: CGPoint(x: rect.minX + rectSize.width, y: rect.minY + rectSize.height - cornerRadius))
+
+    path.addArc(
+        withCenter: CGPoint(x: rect.minX + rectSize.width - cornerRadius, y: rect.minY + rectSize.height - cornerRadius),
+        radius: cornerRadius,
+        startAngle: 0.0,
+        endAngle: .pi / 2.0,
+        clockwise: true
+    )
+
+    path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + rectSize.height))
+
+    path.addArc(
+        withCenter: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + rectSize.height - cornerRadius),
+        radius: cornerRadius,
+        startAngle: .pi / 2.0,
+        endAngle: .pi,
+        clockwise: true
+    )
+
+    return path
+}
+
+final class MessagingServerChatBackgroundView: UIView {
+    private let gradientLayer = CAGradientLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        layer.addSublayer(gradientLayer)
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        gradientLayer.frame = bounds
+        if traitCollection.userInterfaceStyle == .dark {
+            gradientLayer.colors = [
+                UIColor(red: 0.11, green: 0.14, blue: 0.18, alpha: 1.0).cgColor,
+                UIColor(red: 0.09, green: 0.11, blue: 0.15, alpha: 1.0).cgColor,
+            ]
+        } else {
+            gradientLayer.colors = [
+                UIColor(red: 0.91, green: 0.96, blue: 0.99, alpha: 1.0).cgColor,
+                UIColor(red: 0.96, green: 0.98, blue: 1.0, alpha: 1.0).cgColor,
+            ]
+        }
+        setNeedsDisplay()
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else {
+            return
+        }
+        let dotColor = traitCollection.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.04)
+            : UIColor.systemBlue.withAlphaComponent(0.04)
+        context.setFillColor(dotColor.cgColor)
+
+        let spacing: CGFloat = 26.0
+        let radius: CGFloat = 3.0
+        let rowOffset = spacing / 2.0
+        var rowIndex = 0
+        var y: CGFloat = -spacing
+        while y < rect.maxY + spacing {
+            let startX: CGFloat = rowIndex.isMultiple(of: 2) ? -spacing : -spacing + rowOffset
+            var x = startX
+            while x < rect.maxX + spacing {
+                context.fillEllipse(in: CGRect(x: x, y: y, width: radius * 2.0, height: radius * 2.0))
+                x += spacing
+            }
+            y += spacing
+            rowIndex += 1
+        }
+    }
+}
+
+final class MessagingServerBubbleBackgroundView: UIView {
+    private let fillLayer = CAShapeLayer()
+    private let strokeLayer = CAShapeLayer()
+
+    var fillColor: UIColor = .white {
+        didSet {
+            fillLayer.fillColor = fillColor.cgColor
+        }
+    }
+
+    var strokeColor: UIColor? {
+        didSet {
+            strokeLayer.strokeColor = strokeColor?.cgColor
+            strokeLayer.lineWidth = strokeColor == nil ? 0.0 : 1.0 / UIScreen.main.scale
+        }
+    }
+
+    var tailPosition: CGFloat = 0.16 {
+        didSet {
+            setNeedsLayout()
+        }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        layer.addSublayer(fillLayer)
+        layer.addSublayer(strokeLayer)
+        fillLayer.fillColor = fillColor.cgColor
+        strokeLayer.fillColor = UIColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let tailHeight: CGFloat = 7.0
+        let path = messagingServerTelegramRoundedRectWithTailPath(
+            rectSize: CGSize(width: bounds.width, height: max(16.0, bounds.height - tailHeight)),
+            cornerRadius: 18.0,
+            tailSize: CGSize(width: 14.0, height: tailHeight),
+            tailRadius: 3.5,
+            tailPosition: tailPosition,
+            transformTail: true
+        )
+        fillLayer.frame = bounds
+        fillLayer.path = path.cgPath
+        strokeLayer.frame = bounds
+        strokeLayer.path = path.cgPath
+    }
+}
+
 final class MessagingServerRemoteMediaLoader {
     static let shared = MessagingServerRemoteMediaLoader()
 
@@ -419,16 +668,16 @@ final class MessagingServerChatListCell: UITableViewCell {
         selectedBackgroundView = selectedView
 
         avatarView.translatesAutoresizingMaskIntoConstraints = false
-        avatarView.widthAnchor.constraint(equalToConstant: 52.0).isActive = true
-        avatarView.heightAnchor.constraint(equalToConstant: 52.0).isActive = true
+        avatarView.widthAnchor.constraint(equalToConstant: 56.0).isActive = true
+        avatarView.heightAnchor.constraint(equalToConstant: 56.0).isActive = true
 
         titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
         titleLabel.numberOfLines = 1
         titleLabel.adjustsFontForContentSizeCategory = true
 
         subtitleLabel.font = UIFont.systemFont(ofSize: 15.0)
-        subtitleLabel.textColor = .label
-        subtitleLabel.numberOfLines = 2
+        subtitleLabel.textColor = .secondaryLabel
+        subtitleLabel.numberOfLines = 1
         subtitleLabel.adjustsFontForContentSizeCategory = true
 
         detailLabel.font = UIFont.systemFont(ofSize: 12.5, weight: .medium)
@@ -460,7 +709,7 @@ final class MessagingServerChatListCell: UITableViewCell {
         trailingStack.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         textStack.axis = .vertical
-        textStack.spacing = 4.0
+        textStack.spacing = 2.0
         textStack.addArrangedSubview(titleLabel)
         textStack.addArrangedSubview(subtitleLabel)
         textStack.addArrangedSubview(detailLabel)
@@ -496,7 +745,7 @@ final class MessagingServerChatListCell: UITableViewCell {
         titleLabel.text = configuration.title
         titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: isUnread ? .semibold : .medium)
         subtitleLabel.text = configuration.subtitle
-        subtitleLabel.textColor = isUnread ? .label : .secondaryLabel
+        subtitleLabel.textColor = .secondaryLabel
         detailLabel.text = configuration.detail
         detailLabel.isHidden = configuration.detail?.isEmpty ?? true
         timestampLabel.text = configuration.timestamp
@@ -520,6 +769,7 @@ struct MessagingServerBubbleConfiguration {
     let isOutgoing: Bool
     let isPending: Bool
     let isFailed: Bool
+    let showsAvatar: Bool
     let avatarAsset: MessagingServerCachedAsset?
     let avatarTitle: String
 }
@@ -529,7 +779,7 @@ final class MessagingServerBubbleCell: UITableViewCell {
     private let horizontalStack = UIStackView()
     private let leadingSpacer = UIView()
     private let trailingSpacer = UIView()
-    private let bubbleView = UIView()
+    private let bubbleView = MessagingServerBubbleBackgroundView()
     private let contentStack = UIStackView()
     private let titleLabel = UILabel()
     private let replyLabel = PaddingLabel()
@@ -556,13 +806,11 @@ final class MessagingServerBubbleCell: UITableViewCell {
         horizontalStack.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(horizontalStack)
 
-        bubbleView.layer.cornerRadius = 20.0
-        bubbleView.layer.cornerCurve = .continuous
         bubbleView.translatesAutoresizingMaskIntoConstraints = false
         bubbleView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.76).isActive = true
 
         contentStack.axis = .vertical
-        contentStack.spacing = 6.0
+        contentStack.spacing = 5.0
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         bubbleView.addSubview(contentStack)
 
@@ -606,9 +854,9 @@ final class MessagingServerBubbleCell: UITableViewCell {
             horizontalStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8.0),
             horizontalStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8.0),
             horizontalStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4.0),
-            contentStack.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 10.0),
-            contentStack.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 12.0),
-            contentStack.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -12.0),
+            contentStack.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 14.0),
+            contentStack.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 13.0),
+            contentStack.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -13.0),
             contentStack.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -10.0),
         ])
 
@@ -635,11 +883,15 @@ final class MessagingServerBubbleCell: UITableViewCell {
         if configuration.isOutgoing {
             horizontalStack.addArrangedSubview(leadingSpacer)
             horizontalStack.addArrangedSubview(bubbleView)
+            bubbleView.tailPosition = 0.88
         } else {
-            avatarView.configure(session: session, asset: configuration.avatarAsset, title: configuration.avatarTitle)
-            horizontalStack.addArrangedSubview(avatarView)
+            if configuration.showsAvatar {
+                avatarView.configure(session: session, asset: configuration.avatarAsset, title: configuration.avatarTitle)
+                horizontalStack.addArrangedSubview(avatarView)
+            }
             horizontalStack.addArrangedSubview(bubbleView)
             horizontalStack.addArrangedSubview(trailingSpacer)
+            bubbleView.tailPosition = 0.14
         }
 
         titleLabel.text = configuration.title
@@ -679,9 +931,10 @@ final class MessagingServerBubbleCell: UITableViewCell {
         previewStack.isHidden = configuration.previewAssets.isEmpty
 
         if configuration.isOutgoing {
-            bubbleView.backgroundColor = configuration.isFailed
-                ? UIColor.systemRed.withAlphaComponent(0.18)
-                : UIColor.systemBlue
+            bubbleView.fillColor = configuration.isFailed
+                ? UIColor.systemRed.withAlphaComponent(traitCollection.userInterfaceStyle == .dark ? 0.28 : 0.18)
+                : UIColor(red: 0.13, green: 0.58, blue: 0.95, alpha: 1.0)
+            bubbleView.strokeColor = configuration.isFailed ? UIColor.systemRed.withAlphaComponent(0.45) : nil
             titleLabel.textColor = UIColor.white.withAlphaComponent(0.92)
             replyLabel.textColor = UIColor.white.withAlphaComponent(0.9)
             replyLabel.backgroundColor = UIColor.white.withAlphaComponent(0.12)
@@ -691,10 +944,13 @@ final class MessagingServerBubbleCell: UITableViewCell {
             reactionsLabel.textColor = UIColor.white.withAlphaComponent(0.92)
             footerLabel.textColor = UIColor.white.withAlphaComponent(0.78)
         } else {
-            bubbleView.backgroundColor = UIColor.secondarySystemBackground
+            bubbleView.fillColor = traitCollection.userInterfaceStyle == .dark
+                ? UIColor(red: 0.17, green: 0.19, blue: 0.22, alpha: 0.98)
+                : UIColor.white.withAlphaComponent(0.98)
+            bubbleView.strokeColor = UIColor.separator.withAlphaComponent(traitCollection.userInterfaceStyle == .dark ? 0.18 : 0.22)
             titleLabel.textColor = .systemBlue
             replyLabel.textColor = .secondaryLabel
-            replyLabel.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.7)
+            replyLabel.backgroundColor = UIColor.systemBackground.withAlphaComponent(traitCollection.userInterfaceStyle == .dark ? 0.36 : 0.72)
             replyLabel.layer.borderColor = UIColor.separator.cgColor
             bodyLabel.textColor = .label
             attachmentsLabel.textColor = .secondaryLabel
@@ -702,16 +958,6 @@ final class MessagingServerBubbleCell: UITableViewCell {
             footerLabel.textColor = .tertiaryLabel
         }
 
-        if configuration.isFailed {
-            bubbleView.layer.borderWidth = 1.0
-            bubbleView.layer.borderColor = UIColor.systemRed.withAlphaComponent(0.45).cgColor
-        } else if configuration.isOutgoing {
-            bubbleView.layer.borderWidth = 0.0
-            bubbleView.layer.borderColor = nil
-        } else {
-            bubbleView.layer.borderWidth = 1.0 / UIScreen.main.scale
-            bubbleView.layer.borderColor = UIColor.separator.withAlphaComponent(0.35).cgColor
-        }
         bubbleView.alpha = configuration.isPending ? 0.82 : 1.0
     }
 }

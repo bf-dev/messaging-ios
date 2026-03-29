@@ -34,6 +34,9 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     private let client: MessagingServerAPIClient
     private let inbox: MessagingServerInboxSummary
 
+    private let chatBackgroundView = MessagingServerChatBackgroundView()
+    private let titleContainer = UIStackView()
+    private let titleAvatarView = MessagingServerAvatarView()
     private let titleStack = UIStackView()
     private let titleTextLabel = UILabel()
     private let subtitleTextLabel = UILabel()
@@ -95,6 +98,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         view.backgroundColor = .systemBackground
         navigationItem.largeTitleDisplayMode = .never
         view.accessibilityIdentifier = "messaging.chat.screen"
+        configureBackgroundView()
         configureTitleView()
         configureTableView()
         configureComposer()
@@ -124,26 +128,49 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateTextViewHeight()
+        composerContainer.layer.shadowOpacity = traitCollection.userInterfaceStyle == .dark ? 0.18 : 0.08
+    }
+
+    private func configureBackgroundView() {
+        chatBackgroundView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(chatBackgroundView)
+        NSLayoutConstraint.activate([
+            chatBackgroundView.topAnchor.constraint(equalTo: view.topAnchor),
+            chatBackgroundView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            chatBackgroundView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            chatBackgroundView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
     }
 
     private func configureTitleView() {
+        titleContainer.axis = .horizontal
+        titleContainer.alignment = .center
+        titleContainer.spacing = 8.0
+
+        titleAvatarView.translatesAutoresizingMaskIntoConstraints = false
+        titleAvatarView.widthAnchor.constraint(equalToConstant: 32.0).isActive = true
+        titleAvatarView.heightAnchor.constraint(equalToConstant: 32.0).isActive = true
+        titleAvatarView.configure(session: session, asset: inbox.avatarAsset, title: inbox.avatarTitle)
+
         titleStack.axis = .vertical
-        titleStack.alignment = .center
+        titleStack.alignment = .leading
         titleStack.spacing = 1.0
 
         titleTextLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
         titleTextLabel.text = inbox.displayTitle
-        titleTextLabel.textAlignment = .center
+        titleTextLabel.textAlignment = .left
         titleTextLabel.adjustsFontForContentSizeCategory = true
 
         subtitleTextLabel.font = UIFont.systemFont(ofSize: 12.0)
         subtitleTextLabel.textColor = .secondaryLabel
-        subtitleTextLabel.textAlignment = .center
+        subtitleTextLabel.textAlignment = .left
         subtitleTextLabel.adjustsFontForContentSizeCategory = true
 
         titleStack.addArrangedSubview(titleTextLabel)
         titleStack.addArrangedSubview(subtitleTextLabel)
-        navigationItem.titleView = titleStack
+        titleContainer.addArrangedSubview(titleAvatarView)
+        titleContainer.addArrangedSubview(titleStack)
+        navigationItem.titleView = titleContainer
         let infoItem = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), style: .plain, target: self, action: #selector(showConversationInfo))
         infoItem.accessibilityIdentifier = "messaging.chat.info"
         infoItem.accessibilityLabel = "Conversation info"
@@ -151,11 +178,10 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     }
 
     private func updateNavigationSubtitle() {
-        let accountName = inbox.accountKey
         let stateText: String
         switch connectionState {
         case .connected:
-            stateText = "Live"
+            stateText = "Live updates"
         case .connecting:
             stateText = "Connecting"
         case .reconnecting:
@@ -163,7 +189,16 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         case .disconnected:
             stateText = "Offline"
         }
-        subtitleTextLabel.text = "\(inbox.platform.displayName) · \(accountName) · \(stateText)"
+        let conversationText: String
+        switch inbox.kind {
+        case .group, .channel:
+            conversationText = "\(max(inbox.participantCount, 1)) participants"
+        case .order:
+            conversationText = "Order chat"
+        case .dm, .unknown:
+            conversationText = "Conversation"
+        }
+        subtitleTextLabel.text = "\(conversationText) · \(stateText)"
     }
 
     private func configureTableView() {
@@ -172,7 +207,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         tableView.dataSource = self
         tableView.delegate = self
         tableView.separatorStyle = .none
-        tableView.backgroundColor = .systemGroupedBackground
+        tableView.backgroundColor = .clear
         tableView.keyboardDismissMode = .interactive
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 96.0
@@ -195,11 +230,13 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
 
         emptyStateTitleLabel.font = UIFont.systemFont(ofSize: 18.0, weight: .semibold)
         emptyStateTitleLabel.textAlignment = .center
+        emptyStateTitleLabel.adjustsFontForContentSizeCategory = true
 
         emptyStateSubtitleLabel.font = UIFont.systemFont(ofSize: 14.0)
         emptyStateSubtitleLabel.textColor = .secondaryLabel
         emptyStateSubtitleLabel.numberOfLines = 0
         emptyStateSubtitleLabel.textAlignment = .center
+        emptyStateSubtitleLabel.adjustsFontForContentSizeCategory = true
 
         emptyStateView.addArrangedSubview(emptyStateIconView)
         emptyStateView.addArrangedSubview(emptyStateTitleLabel)
@@ -216,14 +253,13 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         composerContainer.translatesAutoresizingMaskIntoConstraints = false
         composerContainer.layoutMargins = UIEdgeInsets(top: 10.0, left: 12.0, bottom: 10.0, right: 12.0)
         composerContainer.isLayoutMarginsRelativeArrangement = true
-        composerContainer.backgroundColor = .systemBackground
+        composerContainer.backgroundColor = UIColor.systemBackground.withAlphaComponent(traitCollection.userInterfaceStyle == .dark ? 0.94 : 0.9)
         composerContainer.layer.cornerRadius = 20.0
         composerContainer.layer.cornerCurve = .continuous
         composerContainer.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         composerContainer.layer.borderWidth = 1.0 / UIScreen.main.scale
-        composerContainer.layer.borderColor = UIColor.separator.cgColor
+        composerContainer.layer.borderColor = UIColor.separator.withAlphaComponent(0.24).cgColor
         composerContainer.layer.shadowColor = UIColor.black.cgColor
-        composerContainer.layer.shadowOpacity = 0.08
         composerContainer.layer.shadowRadius = 18.0
         composerContainer.layer.shadowOffset = CGSize(width: 0.0, height: -4.0)
 
@@ -598,8 +634,6 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
 
         let message = [
             "Inbox ID: \(inbox.inboxId)",
-            "Platform: \(inbox.platform.displayName)",
-            "Account: \(inbox.accountKey)",
             "Messages loaded: \(messages.count)",
             "Pending outgoing bubbles: \(pendingCount)",
             "Suggested replies: \(suggestedReplies.count)",
@@ -1011,10 +1045,11 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
     }
 
     private func bubbleConfiguration(for message: MessagingServerMessage) -> MessagingServerBubbleConfiguration {
+        let showsSenderIdentity = inbox.kind == .group || inbox.kind == .channel
         let title: String?
         switch message.direction {
         case .incoming:
-            title = message.senderDisplayName
+            title = showsSenderIdentity ? message.senderDisplayName : nil
         case .system:
             title = "System"
         case .outgoing:
@@ -1041,6 +1076,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             isOutgoing: message.direction == .outgoing,
             isPending: false,
             isFailed: false,
+            showsAvatar: message.direction == .incoming && showsSenderIdentity,
             avatarAsset: message.senderProfileAsset,
             avatarTitle: message.senderDisplayName
         )
@@ -1059,6 +1095,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
             isOutgoing: true,
             isPending: operation.localStatus != .failed,
             isFailed: operation.localStatus == .failed,
+            showsAvatar: false,
             avatarAsset: nil,
             avatarTitle: "You"
         )
