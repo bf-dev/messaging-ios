@@ -369,7 +369,7 @@ final class MessagingServerChatViewController: UIViewController, UITableViewData
         updateSuggestedReplyPills()
         updatePlaceholderVisibility()
         if scrollToBottom {
-            scrollToBottom(animated: false)
+            self.scrollToBottom(animated: false)
         }
     }
 
