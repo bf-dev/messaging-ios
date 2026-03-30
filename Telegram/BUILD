@@ -373,6 +373,7 @@ swift_library(
         "//submodules/BuildConfig:BuildConfig",
         "//submodules/ChatListUI:ChatListUI",
         "//submodules/Display:Display",
+        "//submodules/TelegramUI/Components/ChatControllerInteraction:ChatControllerInteraction",
         "//submodules/TelegramUI/Components/ForumCreateTopicScreen:ForumCreateTopicScreen",
         "//submodules/OpenSSLEncryptionProvider:OpenSSLEncryptionProvider",
         "//submodules/Postbox:Postbox",

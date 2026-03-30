@@ -8827,7 +8827,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         }
     }
     
-    func updateTextInputState(_ textInputState: ChatTextInputState) {
+    public func updateTextInputState(_ textInputState: ChatTextInputState) {
         self.updateChatPresentationInterfaceState(interactive: false, { state in
             state.updatedInterfaceState({ state in
                 state.withUpdatedComposeInputState(textInputState)

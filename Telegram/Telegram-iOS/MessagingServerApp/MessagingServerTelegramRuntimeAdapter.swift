@@ -2,6 +2,7 @@ import AccountContext
 import AttachmentUI
 import AppLock
 import BuildConfig
+import ChatControllerInteraction
 import ChatListUI
 import Display
 import ForumCreateTopicScreen
@@ -578,11 +579,11 @@ final class MessagingServerTelegramRuntimeAdapter {
             id: accountRecordId,
             encryptionParameters: encryptionParameters,
             isReadOnly: false,
-            transaction: { _, transaction -> Void in
+            transaction: { [self] _, transaction -> Void in
                 transaction.updatePeersInternal([accountPeer], update: { _, updated in updated })
 
                 for seed in seeds {
-                    let peer = makePeer(for: seed.inbox)
+                    let peer = self.makePeer(for: seed.inbox)
                     transaction.updatePeersInternal([peer], update: { _, updated in updated })
                     transaction.clearHistory(
                         peer.id,
@@ -593,12 +594,12 @@ final class MessagingServerTelegramRuntimeAdapter {
                         forEachMedia: nil
                     )
 
-                    let storeMessages = makeStoreMessages(messages: seed.messages, peerId: peer.id, accountPeerId: accountPeer.id)
+                    let storeMessages = self.makeStoreMessages(messages: seed.messages, peerId: peer.id, accountPeerId: accountPeer.id)
                     if !storeMessages.isEmpty {
                         _ = transaction.addMessages(storeMessages, location: .Random)
                     }
 
-                    let readState = makeReadState(messages: seed.messages, inbox: seed.inbox)
+                    let readState = self.makeReadState(messages: seed.messages, inbox: seed.inbox)
                     transaction.resetIncomingReadStates([peer.id: [Namespaces.Message.Cloud: readState]])
                 }
 

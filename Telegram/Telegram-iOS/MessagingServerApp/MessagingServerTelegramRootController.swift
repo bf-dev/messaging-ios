@@ -13,6 +13,10 @@ final class MessagingServerTelegramRootController: NavigationController, Telegra
         super.init(mode: .automaticMasterDetail, theme: theme)
     }
 
+    required init(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
     @discardableResult
     func openStoryCamera(
         mode: StoryCameraMode,
