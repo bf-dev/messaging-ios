@@ -21,6 +21,7 @@ final class MessagingServerAppDelegate: UIResponder, UIApplicationDelegate {
         configureAppearance()
 
         let window = UIWindow(frame: UIScreen.main.bounds)
+        window.backgroundColor = .systemBackground
         self.window = window
         installRoot(animated: false)
         window.makeKeyAndVisible()
@@ -59,9 +60,11 @@ final class MessagingServerAppDelegate: UIResponder, UIApplicationDelegate {
             return
         }
 
-        if animated, let snapshot = window.snapshotView(afterScreenUpdates: true) {
-            rootViewController.view.addSubview(snapshot)
+        if animated, let snapshot = window.snapshotView(afterScreenUpdates: false) {
             window.rootViewController = rootViewController
+            snapshot.frame = rootViewController.view.bounds
+            snapshot.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            rootViewController.view.addSubview(snapshot)
             UIView.animate(withDuration: 0.28, animations: {
                 snapshot.alpha = 0.0
             }, completion: { _ in
@@ -87,7 +90,7 @@ final class MessagingServerAppDelegate: UIResponder, UIApplicationDelegate {
         }
 
         let navigationController = NavigationController(mode: .single, theme: MessagingServerTelegramPresentation.navigationControllerTheme)
-        navigationController.setViewControllers([welcome], animated: false)
+        navigationController.pushViewController(welcome, animated: false)
         return navigationController
     }
 
@@ -111,15 +114,19 @@ final class MessagingServerAppDelegate: UIResponder, UIApplicationDelegate {
                 self?.installRoot(animated: true)
             }
         )
-        navigationController.setViewControllers([rootController], animated: false)
+        navigationController.pushViewController(rootController, animated: false)
         return navigationController
     }
 }
 
 final class MessagingServerTelegramMainTabController: TabBarControllerImpl {
     private weak var rootController: MessagingServerTelegramRootController?
+    private let session: MessagingServerSession
+    private let client: MessagingServerAPIClient
+    private let windowStyle: WindowUserInterfaceStyle
     private let settingsController: MessagingServerSettingsViewController
     private var runtimeAdapter: MessagingServerTelegramRuntimeAdapter?
+    private var didStartRuntimeBootstrap = false
 
     init(
         rootController: MessagingServerTelegramRootController,
@@ -131,6 +138,9 @@ final class MessagingServerTelegramMainTabController: TabBarControllerImpl {
         onLogout: @escaping () -> Void
     ) {
         self.rootController = rootController
+        self.session = session
+        self.client = client
+        self.windowStyle = windowStyle
         let presentationData = MessagingServerTelegramPresentation.presentationData
         let inboxes = MessagingServerInboxListViewController(session: session, client: client)
         inboxes.title = "Chats"
@@ -165,51 +175,67 @@ final class MessagingServerTelegramMainTabController: TabBarControllerImpl {
         rootController.mainTabController = self
         rootController.chatsController = inboxes
         rootController.settingsController = settings
-
-        if let runtimeAdapter = MessagingServerTelegramRuntimeAdapter(
-            session: session,
-            client: client,
-            windowStyle: windowStyle
-        ) {
-            self.runtimeAdapter = runtimeAdapter
-            runtimeAdapter.bootstrap { [weak self] result in
-                guard let self else {
-                    return
-                }
-                switch result {
-                case .failure:
-                    break
-                case let .success(context):
-                    customNavigateToChatControllerHook = { [weak runtimeAdapter] params in
-                        runtimeAdapter?.handleMessagingServerNavigation(params: params) ?? false
-                    }
-                    customMakeChatControllerHook = { [weak runtimeAdapter] context, chatLocation, subject, botStart, mode, params in
-                        runtimeAdapter?.makeMessagingServerChatController(
-                            context: context,
-                            chatLocation: chatLocation,
-                            requestedSubject: subject,
-                            botStart: botStart,
-                            mode: mode,
-                            params: params
-                        )
-                    }
-
-                    let chatsController = runtimeAdapter.makeChatListController(context: context)
-                    let selectedIndex = self.selectedIndex
-                    self.setControllers([chatsController, self.settingsController], selectedIndex: selectedIndex)
-                    self.rootController?.chatsController = chatsController
-                    self.rootController?.settingsController = self.settingsController
-                }
-            }
-        }
     }
 
     required init(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        startRuntimeBootstrapIfNeeded()
+    }
+
     deinit {
         customNavigateToChatControllerHook = nil
         customMakeChatControllerHook = nil
+    }
+
+    private func startRuntimeBootstrapIfNeeded() {
+        guard !didStartRuntimeBootstrap else {
+            return
+        }
+        didStartRuntimeBootstrap = true
+
+        if runtimeAdapter == nil {
+            runtimeAdapter = MessagingServerTelegramRuntimeAdapter(
+                session: session,
+                client: client,
+                windowStyle: windowStyle
+            )
+        }
+        guard let runtimeAdapter else {
+            return
+        }
+
+        runtimeAdapter.bootstrap { [weak self, weak runtimeAdapter] result in
+            guard let self else {
+                return
+            }
+            switch result {
+            case .failure:
+                break
+            case let .success(context):
+                customNavigateToChatControllerHook = { [weak runtimeAdapter] params in
+                    runtimeAdapter?.handleMessagingServerNavigation(params: params) ?? false
+                }
+                customMakeChatControllerHook = { [weak runtimeAdapter] context, chatLocation, subject, botStart, mode, params in
+                    runtimeAdapter?.makeMessagingServerChatController(
+                        context: context,
+                        chatLocation: chatLocation,
+                        requestedSubject: subject,
+                        botStart: botStart,
+                        mode: mode,
+                        params: params
+                    )
+                }
+
+                let chatsController = runtimeAdapter.makeChatListController(context: context)
+                let selectedIndex = self.selectedIndex
+                self.setControllers([chatsController, self.settingsController], selectedIndex: selectedIndex)
+                self.rootController?.chatsController = chatsController
+                self.rootController?.settingsController = self.settingsController
+            }
+        }
     }
 }
