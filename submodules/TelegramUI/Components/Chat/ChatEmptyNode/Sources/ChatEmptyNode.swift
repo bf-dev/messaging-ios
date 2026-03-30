@@ -773,6 +773,8 @@ private final class ChatEmptyNodeCloudChatContent: ASDisplayNode, ChatEmptyNodeC
             maxWidth = min(240.0, maxWidth)
             
             switch customChatContents.kind {
+            case .messagingServerChat:
+                break
             case .quickReplyMessageInput:
                 insets.top = 10.0
                 imageSpacing = 5.0
@@ -802,6 +804,9 @@ private final class ChatEmptyNodeCloudChatContent: ASDisplayNode, ChatEmptyNodeC
             
             if case let .customChatContents(customChatContents) = interfaceState.subject {
                 switch customChatContents.kind {
+                case .messagingServerChat:
+                    titleString = ""
+                    strings = []
                 case let .quickReplyMessageInput(shortcut, shortcutType):
                     switch shortcutType {
                     case .generic:
@@ -1834,8 +1839,13 @@ public final class ChatEmptyNode: ASDisplayNode {
         case let .emptyChat(emptyType):
             if case .customGreeting = emptyType {
                 contentType = .greeting
-            } else if case .customChatContents = interfaceState.subject {
-                contentType = .cloud
+            } else if case let .customChatContents(customChatContents) = interfaceState.subject {
+                switch customChatContents.kind {
+                case .messagingServerChat:
+                    contentType = .regular
+                case .quickReplyMessageInput, .businessLinkSetup, .hashTagSearch:
+                    contentType = .cloud
+                }
             } else if case .replyThread = interfaceState.chatLocation {
                 if case .topic = emptyType {
                     contentType = .topic

@@ -1881,6 +1881,8 @@ public final class ChatEntityKeyboardInputNode: ChatInputNode {
         }
         if case let .customChatContents(customChatContents) = interfaceState.subject {
             switch customChatContents.kind {
+            case .messagingServerChat:
+                break
             case .quickReplyMessageInput:
                 break
             case .hashTagSearch:

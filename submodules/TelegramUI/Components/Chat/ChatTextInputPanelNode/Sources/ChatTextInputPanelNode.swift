@@ -1527,6 +1527,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         var displayMediaButton = true
         if case let .customChatContents(customChatContents) = interfaceState.subject {
             switch customChatContents.kind {
+            case .messagingServerChat:
+                break
             case .hashTagSearch:
                 break
             case .quickReplyMessageInput:
@@ -1933,6 +1935,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
                 }
                 if case let .customChatContents(customChatContents) = interfaceState.subject {
                     switch customChatContents.kind {
+                    case .messagingServerChat:
+                        break
                     case .hashTagSearch:
                         placeholder = ""
                     case let .quickReplyMessageInput(_, shortcutType):
@@ -1971,6 +1975,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             if let interfaceState = self.presentationInterfaceState {
                 if case let .customChatContents(customChatContents) = interfaceState.subject {
                     switch customChatContents.kind {
+                    case .messagingServerChat:
+                        break
                     case .hashTagSearch:
                         break
                     case .quickReplyMessageInput:
@@ -4357,6 +4363,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             
             if case let .customChatContents(customChatContents) = presentationInterfaceState.subject {
                 switch customChatContents.kind {
+                case .messagingServerChat:
+                    break
                 case .hashTagSearch:
                     break
                 case .quickReplyMessageInput:
@@ -4455,6 +4463,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         if let interfaceState = self.presentationInterfaceState {
             if case let .customChatContents(customChatContents) = interfaceState.subject {
                 switch customChatContents.kind {
+                case .messagingServerChat:
+                    break
                 case .hashTagSearch:
                     break
                 case .quickReplyMessageInput:
@@ -4573,6 +4583,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             var sendButtonHasApplyIcon = interfaceState.interfaceState.editMessage != nil
             if case let .customChatContents(customChatContents) = interfaceState.subject {
                 switch customChatContents.kind {
+                case .messagingServerChat:
+                    break
                 case .hashTagSearch:
                     break
                 case .quickReplyMessageInput:
@@ -5252,7 +5264,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     }
     
     public func ensureUnfocused() {
-        self.textInputNode?.resignFirstResponder()
+        _ = self.textInputNode?.resignFirstResponder()
     }
     
     public func ensureFocused() {
@@ -5265,7 +5277,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         }
         
         if !self.switching {
-            self.textInputNode?.becomeFirstResponder()
+            _ = self.textInputNode?.becomeFirstResponder()
         }
     }
     
@@ -5277,7 +5289,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         
         if !self.switching {
             self.switching = true
-            self.textInputNode?.becomeFirstResponder()
+            _ = self.textInputNode?.becomeFirstResponder()
             
             self.switchToTextInputIfNeeded?()
             self.switching = false
